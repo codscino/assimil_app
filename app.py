@@ -8,7 +8,7 @@ import re
 import io
 
 # -----------------------------------------------------------------------------
-# 1. ANKI MODEL DEFINITION (Using Raw Strings r"""...""")
+# 1. ANKI MODEL DEFINITION (Raw Strings)
 # -----------------------------------------------------------------------------
 MODEL_ID = 1607392319
 
@@ -179,7 +179,7 @@ anki_model = genanki.Model(
 # -----------------------------------------------------------------------------
 class FlashcardItem(BaseModel):
     fr_word: str = Field(description="Cleaned target French word or expression")
-    fr_phrase: str = Field(description="Natural French sentence featuring target word")
+    fr_phrase: str = Field(description="Natural French sentence featuring the target word matching Assimil style")
     en_word: str = Field(description="Direct English translation of fr_word")
     en_phrase: str = Field(description="English translation of fr_phrase")
     extra_notes: str = Field(description="User notes combined with brief grammar tips if useful")
@@ -203,11 +203,11 @@ def parse_user_input(raw_text):
                 items.append({"raw_word": word, "user_notes": notes})
     return items
 
-def generate_flashcards_with_gemini(api_key, lesson_name, lesson_data, parsed_items):
+def generate_flashcards_with_gemini(api_key, model_name, lesson_name, lesson_data, parsed_items):
     client = genai.Client(api_key=api_key)
     
     prompt = f"""
-    You are an expert French tutor building Anki flashcards based on the 'Assimil French with Ease' methodology.
+    You are an expert French tutor helping to build Anki flashcards based on the 'Assimil French with Ease' methodology.
     
     Reference sentences from {lesson_name}:
     {json.dumps(lesson_data, ensure_ascii=False, indent=2)}
@@ -215,12 +215,15 @@ def generate_flashcards_with_gemini(api_key, lesson_name, lesson_data, parsed_it
     Target words/phrases provided by user:
     {json.dumps(parsed_items, ensure_ascii=False, indent=2)}
     
-    For each item in the user input:
-    - Return fr_word, fr_phrase, en_word, en_phrase, and extra_notes.
+    For each target item in user input:
+    - Clean up the French word (fr_word).
+    - Create a natural French sentence (fr_phrase) reflecting Assimil's conversational style.
+    - Translate both (en_word, en_phrase).
+    - Combine user_notes with brief grammar context in extra_notes.
     """
 
     response = client.models.generate_content(
-        model='gemini-3.5-flash-lite',
+        model=model_name,
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
@@ -228,82 +231,197 @@ def generate_flashcards_with_gemini(api_key, lesson_name, lesson_data, parsed_it
         )
     )
     
-    return json.loads(response.text)
+    parsed_cards = json.loads(response.text)
+    
+    # Attach original raw metadata to allow single-card regeneration later
+    for idx, item in enumerate(parsed_cards):
+        if idx < len(parsed_items):
+            item["raw_word"] = parsed_items[idx]["raw_word"]
+            item["user_notes"] = parsed_items[idx]["user_notes"]
+            
+    return parsed_cards
+
+def regenerate_single_card(api_key, model_name, lesson_name, lesson_data, card_item):
+    client = genai.Client(api_key=api_key)
+    
+    single_item = [{
+        "raw_word": card_item.get("raw_word", card_item.get("fr_word", "")),
+        "user_notes": card_item.get("user_notes", "")
+    }]
+    
+    prompt = f"""
+    You are an expert French tutor helping to build Anki flashcards based on 'Assimil French with Ease'.
+    
+    Reference sentences from {lesson_name}:
+    {json.dumps(lesson_data, ensure_ascii=False, indent=2)}
+    
+    Generate a FRESH, alternative sentence and translation for this target word:
+    {json.dumps(single_item, ensure_ascii=False, indent=2)}
+    """
+
+    response = client.models.generate_content(
+        model=model_name,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=FlashcardItem
+        )
+    )
+    
+    new_card = json.loads(response.text)
+    new_card["raw_word"] = single_item[0]["raw_word"]
+    new_card["user_notes"] = single_item[0]["user_notes"]
+    return new_card
+
+def build_anki_apkg(cards_data, lesson_name):
+    lesson_num = re.sub(r'\D', '', lesson_name) or "01"
+    deck_id = 2059400000 + int(lesson_num)
+    tag_name = f"assimil_lesson_{lesson_num.zfill(2)}"
+    
+    deck = genanki.Deck(deck_id, f"Assimil French::Lesson_{lesson_num.zfill(2)}")
+    
+    for item in cards_data:
+        note = genanki.Note(
+            model=anki_model,
+            fields=[
+                item.get("fr_word", ""),
+                item.get("fr_phrase", ""),
+                item.get("en_word", ""),
+                item.get("en_phrase", ""),
+                item.get("extra_notes", "")
+            ],
+            tags=[tag_name]
+        )
+        deck.add_note(note)
+    
+    buffer = io.BytesIO()
+    genanki.Package(deck).write_to_file(buffer)
+    buffer.seek(0)
+    return buffer
 
 # -----------------------------------------------------------------------------
-# 3. STREAMLIT APP UI
+# 3. STREAMLIT APP UI & SESSION STATE
 # -----------------------------------------------------------------------------
-st.set_page_config(page_title="Assimil Anki Generator", page_icon="🇫🇷", layout="centered")
+st.set_page_config(page_title="Assimil Anki Generator", page_icon="🇫🇷", layout="wide")
+
+# Sidebar settings
+with st.sidebar:
+    st.header("⚙️ Settings")
+    model_choice = st.text_input("Gemini Model", value="gemini-3.5-flash")
+    api_key = st.secrets.get("GEMINI_API_KEY", "")
+    if not api_key:
+        api_key = st.text_input("Enter Gemini API Key", type="password")
 
 st.title("🇫🇷 Assimil French Anki Generator")
 
-api_key = st.secrets.get("GEMINI_API_KEY", "")
-if not api_key:
-    api_key = st.text_input("Enter Gemini API Key", type="password")
-
 lessons = load_lessons()
-selected_lesson = st.selectbox("Select Assimil Lesson", list(lessons.keys()))
 
-st.markdown("""
-**Enter target words/phrases (one per line):**  
-Optional notes can be added in parentheses `()`.  
-*Example:*  
-`salle de bains (bathroom)`  
-`s'il vous plaît`  
-`près de (near to)`
-""")
+# Initialize Session States
+if "cards_data" not in st.session_state:
+    st.session_state.cards_data = None
+if "selected_lesson" not in st.session_state:
+    st.session_state.selected_lesson = list(lessons.keys())[0]
 
-user_input = st.text_area("Target Words / Expressions", height=150)
+# --- STEP 1: INPUT FORM ---
+st.subheader("1. Input Words & Select Lesson")
+c1, c2 = st.columns([1, 2])
 
-if st.button("Generate Anki Deck", type="primary"):
+with c1:
+    selected_lesson = st.selectbox(
+        "Select Assimil Lesson", 
+        list(lessons.keys()),
+        index=list(lessons.keys()).index(st.session_state.selected_lesson)
+    )
+    st.session_state.selected_lesson = selected_lesson
+
+with c2:
+    st.markdown("""
+    **Enter target words/phrases (one per line):**  
+    Add extra notes in parentheses `()`.  
+    *Example:* `salle de bains (bathroom)`
+    """)
+    user_input = st.text_area("Target Words", height=120, placeholder="salle de bains (bathroom)\ns'il vous plaît")
+
+if st.button("✨ Generate Initial Flashcards", type="primary"):
     if not api_key:
-        st.error("Please provide a Gemini API Key.")
+        st.error("Please provide a Gemini API Key in the sidebar or secrets.")
     elif not user_input.strip():
-        st.warning("Please input at least one word.")
+        st.warning("Please enter at least one word.")
     else:
         parsed_items = parse_user_input(user_input)
-        
-        with st.spinner("Generating flashcards with Gemini..."):
+        with st.spinner("Gemini is crafting flashcards..."):
             try:
-                cards_data = generate_flashcards_with_gemini(
+                cards = generate_flashcards_with_gemini(
                     api_key, 
+                    model_choice, 
                     selected_lesson, 
                     lessons[selected_lesson], 
                     parsed_items
                 )
-                
-                lesson_num = re.sub(r'\D', '', selected_lesson) or "01"
-                deck_id = 2059400000 + int(lesson_num)
-                tag_name = f"assimil_lesson_{lesson_num.zfill(2)}"
-                
-                deck = genanki.Deck(deck_id, f"Assimil French::Lesson_{lesson_num.zfill(2)}")
-                
-                for item in cards_data:
-                    note = genanki.Note(
-                        model=anki_model,
-                        fields=[
-                            item.get("fr_word", ""),
-                            item.get("fr_phrase", ""),
-                            item.get("en_word", ""),
-                            item.get("en_phrase", ""),
-                            item.get("extra_notes", "")
-                        ],
-                        tags=[tag_name]
-                    )
-                    deck.add_note(note)
-                
-                buffer = io.BytesIO()
-                genanki.Package(deck).write_to_file(buffer)
-                buffer.seek(0)
-                
-                st.success(f"Generated {len(cards_data)} flashcards successfully!")
-                
-                st.download_button(
-                    label="📥 Download .apkg Package",
-                    data=buffer,
-                    file_name=f"Assimil_Lesson_{lesson_num.zfill(2)}.apkg",
-                    mime="application/octet-stream"
-                )
-                
+                st.session_state.cards_data = cards
+                st.success(f"Generated {len(cards)} cards! Review them below.")
+                st.rerun()
             except Exception as e:
-                st.error(f"Error generating deck: {str(e)}")
+                st.error(f"Error: {str(e)}")
+
+# --- STEP 2: REVIEW & EDIT SECTION ---
+if st.session_state.cards_data:
+    st.divider()
+    st.subheader("2. Review, Edit & Regenerate Cards")
+    st.info("Edit any text directly below. Click '🔄 Regenerate' on any specific card to refresh it with Gemini.")
+    
+    col_actions1, col_actions2 = st.columns([1, 1])
+    with col_actions2:
+        if st.button("🗑️ Reset All Cards", use_container_width=True):
+            st.session_state.cards_data = None
+            st.rerun()
+
+    cards_list = st.session_state.cards_data
+
+    for idx, card in enumerate(cards_list):
+        with st.expander(f"📌 Card {idx + 1}: **{card.get('fr_word', 'New Card')}** ➔ {card.get('en_word', '')}", expanded=True):
+            col_fr, col_en, col_opt = st.columns([2, 2, 1])
+            
+            with col_fr:
+                cards_list[idx]["fr_word"] = st.text_input("French Word", value=card.get("fr_word", ""), key=f"fr_w_{idx}")
+                cards_list[idx]["fr_phrase"] = st.text_area("French Sentence", value=card.get("fr_phrase", ""), key=f"fr_p_{idx}", height=80)
+
+            with col_en:
+                cards_list[idx]["en_word"] = st.text_input("English Word", value=card.get("en_word", ""), key=f"en_w_{idx}")
+                cards_list[idx]["en_phrase"] = st.text_area("English Sentence", value=card.get("en_phrase", ""), key=f"en_p_{idx}", height=80)
+
+            with col_opt:
+                cards_list[idx]["extra_notes"] = st.text_input("Notes", value=card.get("extra_notes", ""), key=f"notes_{idx}")
+                st.write("")
+                st.write("")
+                if st.button("🔄 Regenerate", key=f"regen_{idx}", use_container_width=True):
+                    with st.spinner(f"Regenerating Card {idx + 1}..."):
+                        try:
+                            updated_card = regenerate_single_card(
+                                api_key,
+                                model_choice,
+                                st.session_state.selected_lesson,
+                                lessons[st.session_state.selected_lesson],
+                                card
+                            )
+                            st.session_state.cards_data[idx] = updated_card
+                            st.toast(f"Card {idx + 1} updated!", icon="🎉")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to regenerate card: {str(e)}")
+
+    # --- STEP 3: APPROVE & DOWNLOAD ---
+    st.divider()
+    st.subheader("3. Export Deck")
+    
+    apkg_buffer = build_anki_apkg(st.session_state.cards_data, st.session_state.selected_lesson)
+    lesson_num = re.sub(r'\D', '', st.session_state.selected_lesson) or "01"
+    
+    st.download_button(
+        label="📥 Approve All & Download .apkg Package",
+        data=apkg_buffer,
+        file_name=f"Assimil_Lesson_{lesson_num.zfill(2)}.apkg",
+        mime="application/octet-stream",
+        type="primary",
+        use_container_width=True
+    )
