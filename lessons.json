@@ -1,0 +1,52 @@
+{
+  "Lesson 1": [
+    {"fr": "Pardon, est-ce que vous parlez anglais ?", "en": "Excuse me, do you speak English?"},
+    {"fr": "Non, monsieur, je ne parle pas anglais.", "en": "No, sir, I do not speak English."},
+    {"fr": "Un peu, mais pas très bien.", "en": "A little, but not very well."}
+  ],
+  "Lesson 2": [
+    {"fr": "Où se trouve le restaurant ?", "en": "Where is the restaurant located?"},
+    {"fr": "Il est près de la gare.", "en": "It is near the station."},
+    {"fr": "Merci beaucoup et bonne journée !", "en": "Thank you very much and have a good day!"}
+  ],
+  "Lesson 3": [
+    {"fr": "Combien coûte ce livre ?", "en": "How much does this book cost?"},
+    {"fr": "Il coûte dix euros.", "en": "It costs ten euros."},
+    {"fr": "C'est un peu cher, mais je le prends.", "en": "It's a bit expensive, but I'll take it."}
+  ],
+  "Lesson 4": [
+    {"fr": "Qu'est-ce que vous aimez faire le week-end ?", "en": "What do you like to do on weekends?"},
+    {"fr": "J'aime me promener dans le parc.", "en": "I like to walk in the park."},
+    {"fr": "Parfois, nous allons au cinéma.", "en": "Sometimes we go to the cinema."}
+  ],
+  "Lesson 5": [
+    {"fr": "À quelle heure part le train ?", "en": "What time does the train leave?"},
+    {"fr": "Le train part à huit heures du matin.", "en": "The train leaves at eight o'clock in the morning."},
+    {"fr": "N'oubliez pas votre billet !", "en": "Don't forget your ticket!"}
+  ],
+  "Lesson 6": [
+    {"fr": "Avez-vous une table pour deux personnes ?", "en": "Do you have a table for two people?"},
+    {"fr": "Oui, près de la fenêtre.", "en": "Yes, near the window."},
+    {"fr": "Je voudrais commander un café et un croissant.", "en": "I would like to order a coffee and a croissant."}
+  ],
+  "Lesson 7": [
+    {"fr": "Quel temps fait-il aujourd'hui ?", "en": "What is the weather like today?"},
+    {"fr": "Il fait très beau et il y a du soleil.", "en": "It is very nice and sunny."},
+    {"fr": "Demain, il va pleuvoir.", "en": "Tomorrow it is going to rain."}
+  ],
+  "Lesson 8": [
+    {"fr": "Où habite votre ami ?", "en": "Where does your friend live?"},
+    {"fr": "Il habite au centre-ville.", "en": "He lives downtown."},
+    {"fr": "Nous allons lui rendre visite ce soir.", "en": "We are going to visit him tonight."}
+  ],
+  "Lesson 9": [
+    {"fr": "Je ne trouve pas mes clés.", "en": "I cannot find my keys."},
+    {"fr": "Regardez sur la table de la cuisine.", "en": "Look on the kitchen table."},
+    {"fr": "Ah, les voilà ! Merci !", "en": "Ah, there they are! Thank you!"}
+  ],
+  "Lesson 10": [
+    {"fr": "Pouvez-vous répéter plus lentement, s'il vous plaît ?", "en": "Can you repeat more slowly, please?"},
+    {"fr": "Oui, bien sûr. Comprenez-vous maintenant ?", "en": "Yes, of course. Do you understand now?"},
+    {"fr": "Oui, c'est beaucoup plus clair.", "en": "Yes, it is much clearer."}
+  ]
+}
