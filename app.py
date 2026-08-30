@@ -233,7 +233,6 @@ def generate_flashcards_with_gemini(api_key, model_name, lesson_name, lesson_dat
     
     parsed_cards = json.loads(response.text)
     
-    # Attach original raw metadata to allow single-card regeneration later
     for idx, item in enumerate(parsed_cards):
         if idx < len(parsed_items):
             item["raw_word"] = parsed_items[idx]["raw_word"]
@@ -304,19 +303,24 @@ def build_anki_apkg(cards_data, lesson_name):
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Assimil Anki Generator", page_icon="🇫🇷", layout="wide")
 
-# Sidebar settings
-with st.sidebar:
-    st.header("⚙️ Settings")
-    model_choice = st.text_input("Gemini Model", value="gemini-3.5-flash")
-    api_key = st.secrets.get("GEMINI_API_KEY", "")
-    if not api_key:
-        api_key = st.text_input("Enter Gemini API Key", type="password")
+# Top Header Layout (Title on left, Model dropdown on top right)
+header_col1, header_col2 = st.columns([3, 1])
 
-st.title("🇫🇷 Assimil French Anki Generator")
+with header_col1:
+    st.title("🇫🇷 Assimil French Anki Generator")
+
+with header_col2:
+    model_choice = st.selectbox(
+        "Model",
+        ["gemini-3.5-flash", "gemini-3.6"]
+    )
+
+api_key = st.secrets.get("GEMINI_API_KEY", "")
+if not api_key:
+    api_key = st.text_input("Enter Gemini API Key", type="password")
 
 lessons = load_lessons()
 
-# Initialize Session States
 if "cards_data" not in st.session_state:
     st.session_state.cards_data = None
 if "selected_lesson" not in st.session_state:
@@ -344,7 +348,7 @@ with c2:
 
 if st.button("✨ Generate Initial Flashcards", type="primary"):
     if not api_key:
-        st.error("Please provide a Gemini API Key in the sidebar or secrets.")
+        st.error("Please provide a Gemini API Key.")
     elif not user_input.strip():
         st.warning("Please enter at least one word.")
     else:
