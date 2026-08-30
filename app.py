@@ -8,11 +8,11 @@ import re
 import io
 
 # -----------------------------------------------------------------------------
-# 1. ANKI MODEL DEFINITION
+# 1. ANKI MODEL DEFINITION (Using Raw Strings r"""...""")
 # -----------------------------------------------------------------------------
 MODEL_ID = 1607392319
 
-FRONT_FR2EN = """
+FRONT_FR2EN = r"""
 <div id="fr-target-data" style="display:none;">{{fr_word}}</div>
 
 {{#fr_phrase}}
@@ -32,7 +32,7 @@ FRONT_FR2EN = """
     if (phraseDiv && targetData) {
         var word = targetData.textContent.trim();
         if (word) { 
-            var escapedWord = word.replace(/[-\/\\\\^$*+?.()|[\\]{}]/g, '\\\\$&');
+            var escapedWord = word.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
             var regex = new RegExp('(' + escapedWord + ')', "gi");
             phraseDiv.innerHTML = phraseDiv.innerHTML.replace(regex, "<span class='highlight'>$1</span>");
         }
@@ -41,7 +41,7 @@ FRONT_FR2EN = """
 </script>
 """
 
-BACK_FR2EN = """
+BACK_FR2EN = r"""
 <div id="fr-target-back-data" style="display:none;">{{fr_word}}</div>
 
 {{#fr_phrase}}
@@ -78,7 +78,7 @@ note: {{extra_notes}}
     if (phraseDiv && targetData) {
         var word = targetData.textContent.trim();
         if (word) {
-            var escapedWord = word.replace(/[-\/\\\\^$*+?.()|[\\]{}]/g, '\\\\$&');
+            var escapedWord = word.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
             var regex = new RegExp('(' + escapedWord + ')', "gi");
             phraseDiv.innerHTML = phraseDiv.innerHTML.replace(regex, "<span class='highlight'>$1</span>");
         }
@@ -87,7 +87,7 @@ note: {{extra_notes}}
 </script>
 """
 
-FRONT_EN2FR = """
+FRONT_EN2FR = r"""
 {{#en_phrase}}
 <div id="en-phrase">{{en_phrase}}</div>
 {{/en_phrase}}
@@ -105,7 +105,7 @@ note: {{extra_notes}}
 {{type:fr_word}}
 """
 
-BACK_EN2FR = """
+BACK_EN2FR = r"""
 {{#en_phrase}}
 <div id="en-phrase-back">{{en_phrase}}</div>
 {{/en_phrase}}
@@ -134,7 +134,7 @@ note: {{extra_notes}}
 {{/fr_phrase}}
 """
 
-CARD_STYLE = """
+CARD_STYLE = r"""
 .card {
   font-family: Arial, sans-serif;
   font-size: 20px;
@@ -179,7 +179,7 @@ anki_model = genanki.Model(
 # -----------------------------------------------------------------------------
 class FlashcardItem(BaseModel):
     fr_word: str = Field(description="Cleaned target French word or expression")
-    fr_phrase: str = Field(description="Natural French sentence featuring the target word matching Assimil style")
+    fr_phrase: str = Field(description="Natural French sentence featuring target word")
     en_word: str = Field(description="Direct English translation of fr_word")
     en_phrase: str = Field(description="English translation of fr_phrase")
     extra_notes: str = Field(description="User notes combined with brief grammar tips if useful")
@@ -199,3 +199,111 @@ def parse_user_input(raw_text):
         if match:
             word = match.group(1).strip()
             notes = match.group(2).strip() if match.group(2) else ""
+            if word:
+                items.append({"raw_word": word, "user_notes": notes})
+    return items
+
+def generate_flashcards_with_gemini(api_key, lesson_name, lesson_data, parsed_items):
+    client = genai.Client(api_key=api_key)
+    
+    prompt = f"""
+    You are an expert French tutor building Anki flashcards based on the 'Assimil French with Ease' methodology.
+    
+    Reference sentences from {lesson_name}:
+    {json.dumps(lesson_data, ensure_ascii=False, indent=2)}
+    
+    Target words/phrases provided by user:
+    {json.dumps(parsed_items, ensure_ascii=False, indent=2)}
+    
+    For each item in the user input:
+    - Return fr_word, fr_phrase, en_word, en_phrase, and extra_notes.
+    """
+
+    response = client.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=list[FlashcardItem]
+        )
+    )
+    
+    return json.loads(response.text)
+
+# -----------------------------------------------------------------------------
+# 3. STREAMLIT APP UI
+# -----------------------------------------------------------------------------
+st.set_page_config(page_title="Assimil Anki Generator", page_icon="🇫🇷", layout="centered")
+
+st.title("🇫🇷 Assimil French Anki Generator")
+
+api_key = st.secrets.get("GEMINI_API_KEY", "")
+if not api_key:
+    api_key = st.text_input("Enter Gemini API Key", type="password")
+
+lessons = load_lessons()
+selected_lesson = st.selectbox("Select Assimil Lesson", list(lessons.keys()))
+
+st.markdown("""
+**Enter target words/phrases (one per line):**  
+Optional notes can be added in parentheses `()`.  
+*Example:*  
+`salle de bains (bathroom)`  
+`s'il vous plaît`  
+`près de (near to)`
+""")
+
+user_input = st.text_area("Target Words / Expressions", height=150)
+
+if st.button("Generate Anki Deck", type="primary"):
+    if not api_key:
+        st.error("Please provide a Gemini API Key.")
+    elif not user_input.strip():
+        st.warning("Please input at least one word.")
+    else:
+        parsed_items = parse_user_input(user_input)
+        
+        with st.spinner("Generating flashcards with Gemini..."):
+            try:
+                cards_data = generate_flashcards_with_gemini(
+                    api_key, 
+                    selected_lesson, 
+                    lessons[selected_lesson], 
+                    parsed_items
+                )
+                
+                lesson_num = re.sub(r'\D', '', selected_lesson) or "01"
+                deck_id = 2059400000 + int(lesson_num)
+                tag_name = f"assimil_lesson_{lesson_num.zfill(2)}"
+                
+                deck = genanki.Deck(deck_id, f"Assimil French::Lesson_{lesson_num.zfill(2)}")
+                
+                for item in cards_data:
+                    note = genanki.Note(
+                        model=anki_model,
+                        fields=[
+                            item.get("fr_word", ""),
+                            item.get("fr_phrase", ""),
+                            item.get("en_word", ""),
+                            item.get("en_phrase", ""),
+                            item.get("extra_notes", "")
+                        ],
+                        tags=[tag_name]
+                    )
+                    deck.add_note(note)
+                
+                buffer = io.BytesIO()
+                genanki.Package(deck).write_to_file(buffer)
+                buffer.seek(0)
+                
+                st.success(f"Generated {len(cards_data)} flashcards successfully!")
+                
+                st.download_button(
+                    label="📥 Download .apkg Package",
+                    data=buffer,
+                    file_name=f"Assimil_Lesson_{lesson_num.zfill(2)}.apkg",
+                    mime="application/octet-stream"
+                )
+                
+            except Exception as e:
+                st.error(f"Error generating deck: {str(e)}")
