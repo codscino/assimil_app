@@ -1,0 +1,32 @@
+name: Keep Streamlit App Awake
+
+on:
+  schedule:
+    # Thirty minutes is comfortably below Streamlit Community Cloud's inactivity window.
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check Streamlit health
+        env:
+          STREAMLIT_APP_URL: ${{ secrets.STREAMLIT_APP_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$STREAMLIT_APP_URL" ]; then
+            echo "The STREAMLIT_APP_URL repository secret is not configured."
+            exit 1
+          fi
+
+          health_url="${STREAMLIT_APP_URL%/}/_stcore/health"
+          curl --fail --silent --show-error --location \
+            --retry 3 --retry-delay 5 --max-time 30 \
+            "$health_url"
+          echo "Streamlit app is healthy."

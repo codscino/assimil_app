@@ -193,7 +193,7 @@ def load_lessons():
 def get_lesson_tag(lesson_name):
     lesson_num = re.sub(r'\D', '', lesson_name) or "01"
     lesson_num_padded = lesson_num.zfill(2)
-    return f"assimil_lesson_{lesson_num_padded}", f"lesson_{lesson_num_padded}"
+    return f"assimil_lesson_{lesson_num_padded}"
 
 
 def parse_user_input(raw_text):
@@ -213,7 +213,7 @@ def parse_user_input(raw_text):
 def generate_flashcards_with_gemini(api_key, model_name, lesson_name, lesson_data, parsed_items):
     client = genai.Client(api_key=api_key)
     
-    lesson_tag_main, lesson_tag_alt = get_lesson_tag(lesson_name)
+    lesson_tag_main = get_lesson_tag(lesson_name)
 
     prompt = f"""
     You are an expert French tutor creating Anki flashcards for the Assimil method.
@@ -221,7 +221,7 @@ def generate_flashcards_with_gemini(api_key, model_name, lesson_name, lesson_dat
     Lesson context:
     - Lesson name: {lesson_name}
     - This lesson is part of the same learning sequence as the provided reference examples.
-    - The generated card must belong to lesson {lesson_name} and should be tagged in Anki with the lesson number.
+    - Every generated flashcard must be tagged in Anki with the shared lesson tag `{lesson_tag_main}`.
 
     Reference sentences from this lesson:
     {json.dumps(lesson_data, ensure_ascii=False, indent=2)}
@@ -238,10 +238,6 @@ def generate_flashcards_with_gemini(api_key, model_name, lesson_name, lesson_dat
     4. Keep `extra_notes` exactly as provided by the user when there is a note, or leave it empty if not.
     5. Do not invent new user notes. Preserve the original note text faithfully.
     6. Keep the output JSON valid and in the schema requested.
-
-    Tag guidance for export:
-    - Use the lesson tag `{lesson_tag_main}` for every generated flashcard.
-    - Do not put any other tags
     """
 
     response = client.models.generate_content(
@@ -270,13 +266,13 @@ def regenerate_single_card(api_key, model_name, lesson_name, lesson_data, card_i
         "user_notes": card_item.get("user_notes", "")
     }]
 
-    lesson_tag_main, lesson_tag_alt = get_lesson_tag(lesson_name)
+    lesson_tag_main = get_lesson_tag(lesson_name)
     
     prompt = f"""
     You are an expert French tutor creating a single high-quality Anki flashcard for the Assimil method.
 
     The card belongs to lesson: {lesson_name}
-    Export tag guidance: use `{lesson_tag_main}` and optionally `{lesson_tag_alt}`.
+    Shared export tag: `{lesson_tag_main}`
 
     Reference sentences from this lesson:
     {json.dumps(lesson_data, ensure_ascii=False, indent=2)}
@@ -307,12 +303,14 @@ def regenerate_single_card(api_key, model_name, lesson_name, lesson_data, card_i
     new_card["user_notes"] = single_item[0]["user_notes"]
     return new_card
 
-def build_anki_apkg(cards_data, lesson_name):
+def build_anki_apkg(cards_data, lesson_name, shared_tag=None):
     lesson_num = re.sub(r'\D', '', lesson_name) or "01"
     lesson_num_padded = lesson_num.zfill(2)
     deck_id = 2059400000 + int(lesson_num)
-    tag_name = f"assimil_lesson_{lesson_num_padded}"
-    lesson_tag = f"lesson_{lesson_num_padded}"
+
+    tag_name = (shared_tag or get_lesson_tag(lesson_name)).strip()
+    if not tag_name:
+        tag_name = f"assimil_lesson_{lesson_num_padded}"
     
     deck = genanki.Deck(deck_id, f"Assimil French::Lesson_{lesson_num_padded}")
     
@@ -326,7 +324,7 @@ def build_anki_apkg(cards_data, lesson_name):
                 item.get("en_phrase", ""),
                 item.get("extra_notes", "")
             ],
-            tags=[tag_name, lesson_tag]
+            tags=[tag_name]
         )
         deck.add_note(note)
     
@@ -362,6 +360,8 @@ if "cards_data" not in st.session_state:
     st.session_state.cards_data = None
 if "selected_lesson" not in st.session_state:
     st.session_state.selected_lesson = list(lessons.keys())[0]
+if "shared_tag" not in st.session_state:
+    st.session_state.shared_tag = get_lesson_tag(st.session_state.selected_lesson)
 
 # --- STEP 1: INPUT FORM ---
 st.subheader("1. Input Words & Select Lesson")
@@ -373,15 +373,21 @@ with c1:
         list(lessons.keys()),
         index=list(lessons.keys()).index(st.session_state.selected_lesson)
     )
-    st.session_state.selected_lesson = selected_lesson
+    if selected_lesson != st.session_state.selected_lesson:
+        st.session_state.selected_lesson = selected_lesson
+        st.session_state.shared_tag = get_lesson_tag(selected_lesson)
 
 with c2:
     st.markdown("""
     **Enter target words/phrases (one per line):**  
     Add extra notes in parentheses `()`.  
-    *Example:* `comment allez vous (plural form, formal way in french)`
+    *Example:* `comment allez vous (formal way to ask how someone is)`
     """)
-    user_input = st.text_area("Target Words", height=120, placeholder="salle de bains (bathroom)\ns'il vous plaît")
+    user_input = st.text_area(
+        "Target Words",
+        height=120,
+        placeholder="bonjour\ncomment ça va\ns'il vous plaît (please)\nmerci beaucoup"
+    )
 
 if st.button("✨ Generate Initial Flashcards", type="primary"):
     if not api_key:
@@ -410,6 +416,13 @@ if st.session_state.cards_data:
     st.divider()
     st.subheader("2. Review, Edit & Regenerate Cards")
     st.info("Edit any text directly below. Click '🔄 Regenerate' on any specific card to refresh it with Gemini.")
+
+    st.session_state.shared_tag = st.text_input(
+        "Shared tag for all cards",
+        value=st.session_state.shared_tag,
+        help="This tag will be applied to every flashcard in the deck.",
+        key="shared_tag_editor"
+    )
     
     col_actions1, col_actions2 = st.columns([1, 1])
     with col_actions2:
@@ -455,7 +468,11 @@ if st.session_state.cards_data:
     st.divider()
     st.subheader("3. Export Deck")
     
-    apkg_buffer = build_anki_apkg(st.session_state.cards_data, st.session_state.selected_lesson)
+    apkg_buffer = build_anki_apkg(
+        st.session_state.cards_data,
+        st.session_state.selected_lesson,
+        shared_tag=st.session_state.shared_tag,
+    )
     lesson_num = re.sub(r'\D', '', st.session_state.selected_lesson) or "01"
     
     st.download_button(
