@@ -418,6 +418,15 @@ if st.session_state.cards_data:
             st.session_state.cards_data = None
             st.rerun()
 
+    # Sync active input widgets back to state before rendering
+    for idx in range(len(st.session_state.cards_data)):
+        if f"fr_w_{idx}" in st.session_state:
+            st.session_state.cards_data[idx]["fr_word"] = st.session_state[f"fr_w_{idx}"]
+            st.session_state.cards_data[idx]["fr_phrase"] = st.session_state[f"fr_p_{idx}"]
+            st.session_state.cards_data[idx]["en_word"] = st.session_state[f"en_w_{idx}"]
+            st.session_state.cards_data[idx]["en_phrase"] = st.session_state[f"en_p_{idx}"]
+            st.session_state.cards_data[idx]["extra_notes"] = st.session_state[f"notes_{idx}"]
+
     cards_list = st.session_state.cards_data
 
     for idx, card in enumerate(cards_list):
@@ -425,25 +434,24 @@ if st.session_state.cards_data:
             col_fr, col_en, col_opt = st.columns([2, 2, 1])
             
             with col_fr:
-                st.text_input("French Word", value=card.get("fr_word", ""), key=f"fr_w_{idx}")
-                st.text_area("French Sentence", value=card.get("fr_phrase", ""), key=f"fr_p_{idx}", height=80)
+                fr_word_val = st.text_input("French Word", value=card.get("fr_word", ""), key=f"fr_w_{idx}")
+                fr_phrase_val = st.text_area("French Sentence", value=card.get("fr_phrase", ""), key=f"fr_p_{idx}", height=80)
 
             with col_en:
-                st.text_input("English Word", value=card.get("en_word", ""), key=f"en_w_{idx}")
-                st.text_area("English Sentence", value=card.get("en_phrase", ""), key=f"en_p_{idx}", height=80)
+                en_word_val = st.text_input("English Word", value=card.get("en_word", ""), key=f"en_w_{idx}")
+                en_phrase_val = st.text_area("English Sentence", value=card.get("en_phrase", ""), key=f"en_p_{idx}", height=80)
 
             with col_opt:
-                st.text_input("Notes", value=card.get("extra_notes", ""), key=f"notes_{idx}")
+                notes_val = st.text_input("Notes", value=card.get("extra_notes", ""), key=f"notes_{idx}")
                 st.write("")
                 st.write("")
                 if st.button("🔄 Regenerate", key=f"regen_{idx}", use_container_width=True):
-                    # 1. Capture user modifications from active widget keys
                     latest_card = {
-                        "fr_word": st.session_state.get(f"fr_w_{idx}", card.get("fr_word", "")),
-                        "fr_phrase": st.session_state.get(f"fr_p_{idx}", card.get("fr_phrase", "")),
-                        "en_word": st.session_state.get(f"en_w_{idx}", card.get("en_word", "")),
-                        "en_phrase": st.session_state.get(f"en_p_{idx}", card.get("en_phrase", "")),
-                        "extra_notes": st.session_state.get(f"notes_{idx}", card.get("extra_notes", ""))
+                        "fr_word": fr_word_val,
+                        "fr_phrase": fr_phrase_val,
+                        "en_word": en_word_val,
+                        "en_phrase": en_phrase_val,
+                        "extra_notes": notes_val
                     }
 
                     with st.spinner(f"Regenerating Card {idx + 1}..."):
@@ -455,29 +463,17 @@ if st.session_state.cards_data:
                                 lessons[st.session_state.selected_lesson],
                                 latest_card
                             )
-                            # 2. Update backend data object
+                            # Update backing dict and clear widget key state so it re-initializes on rerun
                             st.session_state.cards_data[idx] = updated_card
-
-                            # 3. Explicitly overwrite widget session keys so UI inputs update
-                            st.session_state[f"fr_w_{idx}"] = updated_card.get("fr_word", "")
-                            st.session_state[f"fr_p_{idx}"] = updated_card.get("fr_phrase", "")
-                            st.session_state[f"en_w_{idx}"] = updated_card.get("en_word", "")
-                            st.session_state[f"en_p_{idx}"] = updated_card.get("en_phrase", "")
-                            st.session_state[f"notes_{idx}"] = updated_card.get("extra_notes", "")
+                            
+                            for k in [f"fr_w_{idx}", f"fr_p_{idx}", f"en_w_{idx}", f"en_p_{idx}", f"notes_{idx}"]:
+                                if k in st.session_state:
+                                    del st.session_state[k]
 
                             st.toast(f"Card {idx + 1} updated!", icon="🎉")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Failed to regenerate card: {str(e)}")
-
-    # Sync any manual UI typing back to session_state prior to export download
-    for idx in range(len(st.session_state.cards_data)):
-        if f"fr_w_{idx}" in st.session_state:
-            st.session_state.cards_data[idx]["fr_word"] = st.session_state[f"fr_w_{idx}"]
-            st.session_state.cards_data[idx]["fr_phrase"] = st.session_state[f"fr_p_{idx}"]
-            st.session_state.cards_data[idx]["en_word"] = st.session_state[f"en_w_{idx}"]
-            st.session_state.cards_data[idx]["en_phrase"] = st.session_state[f"en_p_{idx}"]
-            st.session_state.cards_data[idx]["extra_notes"] = st.session_state[f"notes_{idx}"]
 
     # --- STEP 3: APPROVE & DOWNLOAD ---
     st.divider()
