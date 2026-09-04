@@ -189,12 +189,10 @@ def load_lessons():
     with open("lessons.json", "r", encoding="utf-8") as f:
         return json.load(f)
 
-
 def get_lesson_tag(lesson_name):
     lesson_num = re.sub(r'\D', '', lesson_name) or "01"
     lesson_num_padded = lesson_num.zfill(2)
     return f"assimil_lesson_{lesson_num_padded}"
-
 
 def parse_user_input(raw_text):
     items = []
@@ -212,7 +210,6 @@ def parse_user_input(raw_text):
 
 def generate_flashcards_with_gemini(api_key, model_name, lesson_name, lesson_data, parsed_items):
     client = genai.Client(api_key=api_key)
-    
     lesson_tag_main = get_lesson_tag(lesson_name)
 
     prompt = f"""
@@ -220,8 +217,7 @@ def generate_flashcards_with_gemini(api_key, model_name, lesson_name, lesson_dat
 
     Lesson context:
     - Lesson name: {lesson_name}
-    - This lesson is part of the same learning sequence as the provided reference examples.
-    - Every generated flashcard must be tagged in Anki with the shared lesson tag `{lesson_tag_main}`.
+    - Shared tag: `{lesson_tag_main}`
 
     Reference sentences from this lesson:
     {json.dumps(lesson_data, ensure_ascii=False, indent=2)}
@@ -232,12 +228,11 @@ def generate_flashcards_with_gemini(api_key, model_name, lesson_name, lesson_dat
     Instructions for each card:
     1. Clean the French target into a short, natural form for `fr_word`.
     2. Write a natural French sentence for `fr_phrase` that matches the conversational Assimil style.
-       - The cleaned `fr_word` must appear inside `fr_phrase` (case-insensitive, ignoring spaces).
+       - The cleaned `fr_word` must appear inside `fr_phrase` (case-insensitive).
     3. Write the English translation for `en_word` and `en_phrase`.
-       - The cleaned `en_word` must appear inside `en_phrase` (case-insensitive, ignoring spaces).
-    4. Keep `extra_notes` exactly as provided by the user when there is a note, or leave it empty if not.
-    5. Do not invent new user notes. Preserve the original note text faithfully.
-    6. Keep the output JSON valid and in the schema requested.
+       - The cleaned `en_word` must appear inside `en_phrase` (case-insensitive).
+    4. Keep `extra_notes` exactly as provided by the user when present, or leave empty.
+    5. Keep the output JSON valid and matching the schema.
     """
 
     response = client.models.generate_content(
@@ -260,37 +255,27 @@ def generate_flashcards_with_gemini(api_key, model_name, lesson_name, lesson_dat
 
 def regenerate_single_card(api_key, model_name, lesson_name, lesson_data, card_item):
     client = genai.Client(api_key=api_key)
-    
-    edited_card = {
-        "fr_word": card_item.get("fr_word", ""),
-        "fr_phrase": card_item.get("fr_phrase", ""),
-        "en_word": card_item.get("en_word", ""),
-        "en_phrase": card_item.get("en_phrase", ""),
-        "extra_notes": card_item.get("extra_notes", "")
-    }
-
     lesson_tag_main = get_lesson_tag(lesson_name)
     
     prompt = f"""
-    You are an expert French tutor creating a single high-quality Anki flashcard for the Assimil method.
+    You are an expert French tutor updating a single Assimil Anki flashcard.
 
-    The card belongs to lesson: {lesson_name}
-    Shared export tag: `{lesson_tag_main}`
+    Lesson context:
+    - Lesson: {lesson_name}
+    - Tag: `{lesson_tag_main}`
 
     Reference sentences from this lesson:
     {json.dumps(lesson_data, ensure_ascii=False, indent=2)}
 
-    Use these current, user-edited card values as the authoritative input:
-    {json.dumps(edited_card, ensure_ascii=False, indent=2)}
+    Target French Word/Phrase to focus on: "{card_item.get('fr_word', '')}"
+    Existing Notes: "{card_item.get('extra_notes', '')}"
 
-    Requirements:
-    - Keep the edited `fr_word` exactly unless it is clearly invalid French.
-    - Use the edited values as the basis for the regenerated card; do not revert to an older value.
-    - `fr_phrase` should contain the cleaned `fr_word` (case-insensitive, ignoring spaces).
-    - Keep the edited `en_word` unless it no longer translates the edited `fr_word`.
-    - `en_phrase` should contain the cleaned `en_word` (case-insensitive, ignoring spaces).
-    - Preserve the edited `extra_notes` exactly.
-    - Keep the output valid JSON matching the requested schema.
+    Instructions:
+    1. Treat `fr_word` as the primary ground truth target.
+    2. Regenerate `fr_phrase` to be a fresh, natural French Assimil-style sentence containing `fr_word`.
+    3. Regenerate `en_word` to be the direct English translation of the target `fr_word`.
+    4. Regenerate `en_phrase` to accurately translate the new `fr_phrase` into natural English.
+    5. Preserve `extra_notes` as provided above unless empty.
     """
 
     response = client.models.generate_content(
@@ -303,8 +288,8 @@ def regenerate_single_card(api_key, model_name, lesson_name, lesson_data, card_i
     )
     
     new_card = json.loads(response.text)
-    new_card["raw_word"] = edited_card["fr_word"]
-    new_card["user_notes"] = edited_card["extra_notes"]
+    new_card["raw_word"] = card_item.get("fr_word", "")
+    new_card["user_notes"] = card_item.get("extra_notes", "")
     return new_card
 
 def build_anki_apkg(cards_data, lesson_name, shared_tag=None):
@@ -342,7 +327,6 @@ def build_anki_apkg(cards_data, lesson_name, shared_tag=None):
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Assimil Anki Generator", page_icon="🇫🇷", layout="wide")
 
-# Top Header Layout (Title on left, Model dropdown on top right)
 header_col1, header_col2 = st.columns([3, 1])
 
 with header_col1:
@@ -441,18 +425,27 @@ if st.session_state.cards_data:
             col_fr, col_en, col_opt = st.columns([2, 2, 1])
             
             with col_fr:
-                cards_list[idx]["fr_word"] = st.text_input("French Word", value=card.get("fr_word", ""), key=f"fr_w_{idx}")
-                cards_list[idx]["fr_phrase"] = st.text_area("French Sentence", value=card.get("fr_phrase", ""), key=f"fr_p_{idx}", height=80)
+                st.text_input("French Word", value=card.get("fr_word", ""), key=f"fr_w_{idx}")
+                st.text_area("French Sentence", value=card.get("fr_phrase", ""), key=f"fr_p_{idx}", height=80)
 
             with col_en:
-                cards_list[idx]["en_word"] = st.text_input("English Word", value=card.get("en_word", ""), key=f"en_w_{idx}")
-                cards_list[idx]["en_phrase"] = st.text_area("English Sentence", value=card.get("en_phrase", ""), key=f"en_p_{idx}", height=80)
+                st.text_input("English Word", value=card.get("en_word", ""), key=f"en_w_{idx}")
+                st.text_area("English Sentence", value=card.get("en_phrase", ""), key=f"en_p_{idx}", height=80)
 
             with col_opt:
-                cards_list[idx]["extra_notes"] = st.text_input("Notes", value=card.get("extra_notes", ""), key=f"notes_{idx}")
+                st.text_input("Notes", value=card.get("extra_notes", ""), key=f"notes_{idx}")
                 st.write("")
                 st.write("")
                 if st.button("🔄 Regenerate", key=f"regen_{idx}", use_container_width=True):
+                    # 1. Capture user modifications from active widget keys
+                    latest_card = {
+                        "fr_word": st.session_state.get(f"fr_w_{idx}", card.get("fr_word", "")),
+                        "fr_phrase": st.session_state.get(f"fr_p_{idx}", card.get("fr_phrase", "")),
+                        "en_word": st.session_state.get(f"en_w_{idx}", card.get("en_word", "")),
+                        "en_phrase": st.session_state.get(f"en_p_{idx}", card.get("en_phrase", "")),
+                        "extra_notes": st.session_state.get(f"notes_{idx}", card.get("extra_notes", ""))
+                    }
+
                     with st.spinner(f"Regenerating Card {idx + 1}..."):
                         try:
                             updated_card = regenerate_single_card(
@@ -460,13 +453,31 @@ if st.session_state.cards_data:
                                 model_choice,
                                 st.session_state.selected_lesson,
                                 lessons[st.session_state.selected_lesson],
-                                card
+                                latest_card
                             )
+                            # 2. Update backend data object
                             st.session_state.cards_data[idx] = updated_card
+
+                            # 3. Explicitly overwrite widget session keys so UI inputs update
+                            st.session_state[f"fr_w_{idx}"] = updated_card.get("fr_word", "")
+                            st.session_state[f"fr_p_{idx}"] = updated_card.get("fr_phrase", "")
+                            st.session_state[f"en_w_{idx}"] = updated_card.get("en_word", "")
+                            st.session_state[f"en_p_{idx}"] = updated_card.get("en_phrase", "")
+                            st.session_state[f"notes_{idx}"] = updated_card.get("extra_notes", "")
+
                             st.toast(f"Card {idx + 1} updated!", icon="🎉")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Failed to regenerate card: {str(e)}")
+
+    # Sync any manual UI typing back to session_state prior to export download
+    for idx in range(len(st.session_state.cards_data)):
+        if f"fr_w_{idx}" in st.session_state:
+            st.session_state.cards_data[idx]["fr_word"] = st.session_state[f"fr_w_{idx}"]
+            st.session_state.cards_data[idx]["fr_phrase"] = st.session_state[f"fr_p_{idx}"]
+            st.session_state.cards_data[idx]["en_word"] = st.session_state[f"en_w_{idx}"]
+            st.session_state.cards_data[idx]["en_phrase"] = st.session_state[f"en_p_{idx}"]
+            st.session_state.cards_data[idx]["extra_notes"] = st.session_state[f"notes_{idx}"]
 
     # --- STEP 3: APPROVE & DOWNLOAD ---
     st.divider()
