@@ -189,6 +189,13 @@ def load_lessons():
     with open("lessons.json", "r", encoding="utf-8") as f:
         return json.load(f)
 
+
+def get_lesson_tag(lesson_name):
+    lesson_num = re.sub(r'\D', '', lesson_name) or "01"
+    lesson_num_padded = lesson_num.zfill(2)
+    return f"assimil_lesson_{lesson_num_padded}", f"lesson_{lesson_num_padded}"
+
+
 def parse_user_input(raw_text):
     items = []
     for line in raw_text.strip().split('\n'):
@@ -206,20 +213,35 @@ def parse_user_input(raw_text):
 def generate_flashcards_with_gemini(api_key, model_name, lesson_name, lesson_data, parsed_items):
     client = genai.Client(api_key=api_key)
     
+    lesson_tag_main, lesson_tag_alt = get_lesson_tag(lesson_name)
+
     prompt = f"""
-    You are an expert French tutor helping to build Anki flashcards based on the 'Assimil French with Ease' methodology.
-    
-    Reference sentences from {lesson_name}:
+    You are an expert French tutor creating Anki flashcards for the Assimil method.
+
+    Lesson context:
+    - Lesson name: {lesson_name}
+    - This lesson is part of the same learning sequence as the provided reference examples.
+    - The generated card must belong to lesson {lesson_name} and should be tagged in Anki with the lesson number.
+
+    Reference sentences from this lesson:
     {json.dumps(lesson_data, ensure_ascii=False, indent=2)}
-    
-    Target words/phrases provided by user:
+
+    User target words/phrases:
     {json.dumps(parsed_items, ensure_ascii=False, indent=2)}
-    
-    For each target item in user input:
-    - Clean up the French word (fr_word).
-    - Create a natural French sentence (fr_phrase) reflecting Assimil's conversational style.
-    - Translate both (en_word, en_phrase).
-    - Combine user_notes with brief grammar context in extra_notes.
+
+    Instructions for each card:
+    1. Clean the French target into a short, natural form for `fr_word`.
+    2. Write a natural French sentence for `fr_phrase` that matches the conversational Assimil style.
+       - The cleaned `fr_word` must appear inside `fr_phrase` (case-insensitive, ignoring spaces).
+    3. Write the English translation for `en_word` and `en_phrase`.
+       - The cleaned `en_word` must appear inside `en_phrase` (case-insensitive, ignoring spaces).
+    4. Keep `extra_notes` exactly as provided by the user when there is a note, or leave it empty if not.
+    5. Do not invent new user notes. Preserve the original note text faithfully.
+    6. Keep the output JSON valid and in the schema requested.
+
+    Tag guidance for export:
+    - Use the lesson tag `{lesson_tag_main}` for every generated flashcard.
+    - Do not put any other tags
     """
 
     response = client.models.generate_content(
@@ -247,15 +269,28 @@ def regenerate_single_card(api_key, model_name, lesson_name, lesson_data, card_i
         "raw_word": card_item.get("raw_word", card_item.get("fr_word", "")),
         "user_notes": card_item.get("user_notes", "")
     }]
+
+    lesson_tag_main, lesson_tag_alt = get_lesson_tag(lesson_name)
     
     prompt = f"""
-    You are an expert French tutor helping to build Anki flashcards based on 'Assimil French with Ease'.
-    
-    Reference sentences from {lesson_name}:
+    You are an expert French tutor creating a single high-quality Anki flashcard for the Assimil method.
+
+    The card belongs to lesson: {lesson_name}
+    Export tag guidance: use `{lesson_tag_main}` and optionally `{lesson_tag_alt}`.
+
+    Reference sentences from this lesson:
     {json.dumps(lesson_data, ensure_ascii=False, indent=2)}
-    
-    Generate a FRESH, alternative sentence and translation for this target word:
+
+    Generate a fresh, natural alternative sentence and translation for this target word:
     {json.dumps(single_item, ensure_ascii=False, indent=2)}
+
+    Requirements:
+    - `fr_word` should be a cleaned French target.
+    - `fr_phrase` should contain the cleaned `fr_word` (case-insensitive, ignoring spaces).
+    - `en_word` should be a clean English translation of the target.
+    - `en_phrase` should contain the cleaned `en_word` (case-insensitive, ignoring spaces).
+    - Preserve `extra_notes` exactly as provided by the user if present.
+    - Keep the output valid JSON matching the requested schema.
     """
 
     response = client.models.generate_content(
@@ -274,10 +309,12 @@ def regenerate_single_card(api_key, model_name, lesson_name, lesson_data, card_i
 
 def build_anki_apkg(cards_data, lesson_name):
     lesson_num = re.sub(r'\D', '', lesson_name) or "01"
+    lesson_num_padded = lesson_num.zfill(2)
     deck_id = 2059400000 + int(lesson_num)
-    tag_name = f"assimil_lesson_{lesson_num.zfill(2)}"
+    tag_name = f"assimil_lesson_{lesson_num_padded}"
+    lesson_tag = f"lesson_{lesson_num_padded}"
     
-    deck = genanki.Deck(deck_id, f"Assimil French::Lesson_{lesson_num.zfill(2)}")
+    deck = genanki.Deck(deck_id, f"Assimil French::Lesson_{lesson_num_padded}")
     
     for item in cards_data:
         note = genanki.Note(
@@ -289,7 +326,7 @@ def build_anki_apkg(cards_data, lesson_name):
                 item.get("en_phrase", ""),
                 item.get("extra_notes", "")
             ],
-            tags=[tag_name]
+            tags=[tag_name, lesson_tag]
         )
         deck.add_note(note)
     
@@ -342,7 +379,7 @@ with c2:
     st.markdown("""
     **Enter target words/phrases (one per line):**  
     Add extra notes in parentheses `()`.  
-    *Example:* `salle de bains (bathroom)`
+    *Example:* `comment allez vous (plural form, formal way in french)`
     """)
     user_input = st.text_area("Target Words", height=120, placeholder="salle de bains (bathroom)\ns'il vous plaît")
 
