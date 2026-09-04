@@ -258,7 +258,7 @@ def regenerate_single_card(api_key, model_name, lesson_name, lesson_data, card_i
     lesson_tag_main = get_lesson_tag(lesson_name)
     
     prompt = f"""
-    You are an expert French tutor updating a single Assimil Anki flashcard.
+    You are an expert French tutor creating a completely new card based on an updated French word.
 
     Lesson context:
     - Lesson: {lesson_name}
@@ -267,15 +267,16 @@ def regenerate_single_card(api_key, model_name, lesson_name, lesson_data, card_i
     Reference sentences from this lesson:
     {json.dumps(lesson_data, ensure_ascii=False, indent=2)}
 
-    Target French Word/Phrase to focus on: "{card_item.get('fr_word', '')}"
-    Existing Notes: "{card_item.get('extra_notes', '')}"
+    NEW Target French Word/Phrase: "{card_item.get('fr_word', '')}"
+    Notes to preserve: "{card_item.get('extra_notes', '')}"
 
-    Instructions:
-    1. Treat `fr_word` as the primary ground truth target.
-    2. Regenerate `fr_phrase` to be a fresh, natural French Assimil-style sentence containing `fr_word`.
-    3. Regenerate `en_word` to be the direct English translation of the target `fr_word`.
-    4. Regenerate `en_phrase` to accurately translate the new `fr_phrase` into natural English.
-    5. Preserve `extra_notes` as provided above unless empty.
+    CRITICAL INSTRUCTIONS:
+    1. Clean "{card_item.get('fr_word', '')}" for `fr_word`.
+    2. Completely REWRITE `en_word` to be the exact English translation of the NEW `fr_word`.
+    3. Create a BRAND NEW natural French sentence for `fr_phrase` containing `fr_word`.
+    4. Create a BRAND NEW English sentence for `en_phrase` translating the new `fr_phrase`.
+    5. DO NOT reuse any previous translations or context from old words (e.g. ignore any old sausage references).
+    6. Preserve `extra_notes` as provided above unless empty.
     """
 
     response = client.models.generate_content(
@@ -335,7 +336,8 @@ with header_col1:
 with header_col2:
     model_choice = st.selectbox(
         "Model",
-        ["gemini-3.5-flash", "gemini-3.6-flash"]
+        ["gemini-3.5-flash-lite", "gemini-3.5-flash"],
+        index=0
     )
 
 api_key = st.secrets.get("GEMINI_API_KEY", "")
