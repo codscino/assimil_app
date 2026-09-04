@@ -261,10 +261,13 @@ def generate_flashcards_with_gemini(api_key, model_name, lesson_name, lesson_dat
 def regenerate_single_card(api_key, model_name, lesson_name, lesson_data, card_item):
     client = genai.Client(api_key=api_key)
     
-    single_item = [{
-        "raw_word": card_item.get("raw_word", card_item.get("fr_word", "")),
-        "user_notes": card_item.get("user_notes", "")
-    }]
+    edited_card = {
+        "fr_word": card_item.get("fr_word", ""),
+        "fr_phrase": card_item.get("fr_phrase", ""),
+        "en_word": card_item.get("en_word", ""),
+        "en_phrase": card_item.get("en_phrase", ""),
+        "extra_notes": card_item.get("extra_notes", "")
+    }
 
     lesson_tag_main = get_lesson_tag(lesson_name)
     
@@ -277,15 +280,16 @@ def regenerate_single_card(api_key, model_name, lesson_name, lesson_data, card_i
     Reference sentences from this lesson:
     {json.dumps(lesson_data, ensure_ascii=False, indent=2)}
 
-    Generate a fresh, natural alternative sentence and translation for this target word:
-    {json.dumps(single_item, ensure_ascii=False, indent=2)}
+    Use these current, user-edited card values as the authoritative input:
+    {json.dumps(edited_card, ensure_ascii=False, indent=2)}
 
     Requirements:
-    - `fr_word` should be a cleaned French target.
+    - Keep the edited `fr_word` exactly unless it is clearly invalid French.
+    - Use the edited values as the basis for the regenerated card; do not revert to an older value.
     - `fr_phrase` should contain the cleaned `fr_word` (case-insensitive, ignoring spaces).
-    - `en_word` should be a clean English translation of the target.
+    - Keep the edited `en_word` unless it no longer translates the edited `fr_word`.
     - `en_phrase` should contain the cleaned `en_word` (case-insensitive, ignoring spaces).
-    - Preserve `extra_notes` exactly as provided by the user if present.
+    - Preserve the edited `extra_notes` exactly.
     - Keep the output valid JSON matching the requested schema.
     """
 
@@ -299,8 +303,8 @@ def regenerate_single_card(api_key, model_name, lesson_name, lesson_data, card_i
     )
     
     new_card = json.loads(response.text)
-    new_card["raw_word"] = single_item[0]["raw_word"]
-    new_card["user_notes"] = single_item[0]["user_notes"]
+    new_card["raw_word"] = edited_card["fr_word"]
+    new_card["user_notes"] = edited_card["extra_notes"]
     return new_card
 
 def build_anki_apkg(cards_data, lesson_name, shared_tag=None):
