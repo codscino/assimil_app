@@ -312,7 +312,7 @@ with header_col1:
 with header_col2:
     model_choice = st.selectbox(
         "Model",
-        ["gemini-3.5-flash", "gemini-3.6"]
+        ["gemini-3.5-flash", "gemini-3.6-flash"]
     )
 
 api_key = st.secrets.get("GEMINI_API_KEY", "")
