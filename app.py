@@ -207,16 +207,34 @@ def get_lesson_number(lesson_name):
 
 def parse_user_input(raw_text):
     items = []
-    for line in raw_text.strip().split('\n'):
-        line = line.strip()
+    pending_line = ""
+    lines = raw_text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+
+    for line in lines:
+        line = re.sub(r'^\s*(?:[•●▪◦☐☑-]|\d+[.)])\s+', "", line).strip()
         if not line:
             continue
-        match = re.search(r'^(.*?)(?:\((.*?)\))?$', line)
+
+        pending_line = f"{pending_line} {line}".strip()
+        if pending_line.count("(") > pending_line.count(")"):
+            continue
+
+        match = re.search(r'^(.*?)(?:\((.*?)\))?$', pending_line)
         if match:
             word = match.group(1).strip()
             notes = match.group(2).strip() if match.group(2) else ""
             if word:
                 items.append({"raw_word": word, "user_notes": notes})
+        pending_line = ""
+
+    if pending_line:
+        match = re.search(r'^(.*?)(?:\((.*?)\))?$', pending_line)
+        if match:
+            word = match.group(1).strip()
+            notes = match.group(2).strip() if match.group(2) else ""
+            if word:
+                items.append({"raw_word": word, "user_notes": notes})
+
     return items
 
 def generate_flashcards_with_gemini(api_key, model_name, lesson_name, lesson_data, parsed_items):
