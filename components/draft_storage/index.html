@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <script>
-      const STORAGE_KEY = "assimil-flashcard-draft-v1";
+      const DEFAULT_STORAGE_KEY = "assimil-flashcard-draft-v1";
       let hasSentValue = false;
       let lastSentValue;
 
@@ -44,16 +44,19 @@
       window.addEventListener("message", event => {
         if (event.data?.type !== "streamlit:render") return;
         const args = event.data.args || {};
+        const storageKey = typeof args.storage_key === "string"
+          ? args.storage_key
+          : DEFAULT_STORAGE_KEY;
 
         if (args.action === "clear") {
-          removeStorage(STORAGE_KEY);
+          removeStorage(storageKey);
           setValue(null);
         } else if (args.action === "write" && typeof args.draft === "string") {
           // The writer is intentionally one-way. Returning the whole draft to
           // Python here would cause an unnecessary app rerun after every edit.
-          writeStorage(STORAGE_KEY, args.draft);
+          writeStorage(storageKey, args.draft);
         } else if (args.action === "read") {
-          setValue(readStorage(STORAGE_KEY));
+          setValue(readStorage(storageKey));
         }
         send("streamlit:setFrameHeight", { height: 0 });
       });

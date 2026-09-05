@@ -39,6 +39,9 @@ TARGET_LANGUAGES = {
     "nl": {"name": "Dutch", "flag": "🇳🇱", "deck_code": "NL"},
 }
 LANGUAGE_COOKIE = "assimil_target_language"
+NO_ASSIMIL_COOKIE = "assimil_no_assimil_mode"
+TARGET_WORDS_STORAGE_KEY = "assimil-target-words-v1"
+MAX_TARGET_WORDS_LENGTH = 100_000
 
 _draft_storage = components.declare_component(
     "assimil_draft_storage",
@@ -894,6 +897,13 @@ st.set_page_config(page_title="Assimil Anki Generator", page_icon="🇫🇷", la
 cookie_manager = stx.CookieManager(key="assimil_language_cookie_manager")
 saved_target_language = cookie_manager.get(LANGUAGE_COOKIE)
 saved_language_is_valid = saved_target_language in TARGET_LANGUAGES
+saved_no_assimil_cookie = cookie_manager.get(NO_ASSIMIL_COOKIE)
+saved_no_assimil_mode = {
+    "1": True,
+    "0": False,
+    True: True,
+    False: False,
+}.get(saved_no_assimil_cookie)
 
 # Cookie components report their browser value after their first render. Apply
 # it on the following rerun, before the selectbox widget is instantiated.
@@ -969,7 +979,17 @@ lesson_numbers = dict(sorted(lesson_numbers.items()))
 if "cards_data" not in st.session_state:
     st.session_state.cards_data = None
 if "no_assimil_mode" not in st.session_state:
-    st.session_state.no_assimil_mode = not bool(lesson_numbers)
+    st.session_state.no_assimil_mode = (
+        saved_no_assimil_mode
+        if saved_no_assimil_mode is not None
+        else not bool(lesson_numbers)
+    )
+if (
+    saved_no_assimil_mode is not None
+    and not st.session_state.get("no_assimil_cookie_applied")
+):
+    st.session_state.no_assimil_mode = saved_no_assimil_mode
+    st.session_state.no_assimil_cookie_applied = True
 if lesson_numbers and (
     "selected_lesson" not in st.session_state
     or st.session_state.selected_lesson not in lessons
@@ -996,9 +1016,19 @@ if "card_regeneration_baselines" not in st.session_state:
 # after Streamlit has discarded its WebSocket session, reloading the page
 # restores the cards into the new session.
 clear_browser_draft = st.session_state.pop("clear_browser_draft", False)
+clear_target_words = st.session_state.pop("clear_target_words", False)
+if st.session_state.pop("cleanup_after_successful_export", False):
+    st.session_state.cards_data = None
+    st.session_state.card_regeneration_baselines = []
+    st.session_state.card_form_versions = {}
+    st.session_state.target_words = ""
+    st.session_state.target_words_storage_applied = False
+    clear_browser_draft = True
+    clear_target_words = True
 stored_draft = _draft_storage(
     action="clear" if clear_browser_draft else "read",
     draft=None,
+    storage_key="assimil-flashcard-draft-v1",
     key="assimil_draft_reader",
     default=None,
 )
@@ -1019,6 +1049,24 @@ if not clear_browser_draft and not st.session_state.cards_data:
         st.session_state.card_form_epoch += 1
         st.session_state.card_form_versions = {}
         st.toast("Recovered your saved card draft.", icon="↩️")
+
+stored_target_words = _draft_storage(
+    action="clear" if clear_target_words else "read",
+    draft=None,
+    storage_key=TARGET_WORDS_STORAGE_KEY,
+    key="assimil_target_words_reader",
+    default=None,
+)
+if "target_words" not in st.session_state:
+    st.session_state.target_words = ""
+if (
+    not clear_target_words
+    and not st.session_state.get("target_words_storage_applied")
+    and isinstance(stored_target_words, str)
+    and len(stored_target_words) <= MAX_TARGET_WORDS_LENGTH
+):
+    st.session_state.target_words = stored_target_words
+    st.session_state.target_words_storage_applied = True
 
 
 def save_card_field(card_index, field_name, widget_key):
@@ -1045,6 +1093,11 @@ def save_all_card_widgets(all_widget_keys):
 def clear_voice_preview():
     st.session_state.pop("elevenlabs_preview_audio", None)
 
+
+def mark_target_words_changed():
+    """Allow writes after the user, rather than initial rendering, changed input."""
+    st.session_state.target_words_storage_applied = True
+
 # --- STEP 1: INPUT FORM ---
 st.subheader("1. Input Words & Select Lesson")
 c1, c2 = st.columns([1, 2])
@@ -1064,6 +1117,20 @@ with c1:
         st.session_state.shared_tag = new_tag
         st.session_state.shared_tag_editor = new_tag
         st.session_state.last_no_assimil_mode = no_assimil_mode
+
+    persisted_no_assimil_mode = st.session_state.get(
+        "persisted_no_assimil_mode",
+        saved_no_assimil_mode,
+    )
+    if no_assimil_mode != persisted_no_assimil_mode:
+        cookie_manager.set(
+            NO_ASSIMIL_COOKIE,
+            "1" if no_assimil_mode else "0",
+            key=f"save_no_assimil_mode_{int(no_assimil_mode)}",
+            expires_at=datetime.now() + timedelta(days=365),
+        )
+        st.session_state.persisted_no_assimil_mode = no_assimil_mode
+        st.session_state.no_assimil_cookie_applied = True
 
     if lesson_numbers:
         selected_lesson_number = st.select_slider(
@@ -1103,8 +1170,10 @@ with c2:
     """, unsafe_allow_html=True)
     user_input = st.text_area(
         "Target Words",
+        key="target_words",
         height=120,
-        placeholder="bonjour\ncomment ça va\ns'il vous plaît (please)\nmerci beaucoup"
+        placeholder="bonjour\ncomment ça va\ns'il vous plaît (please)\nmerci beaucoup",
+        on_change=mark_target_words_changed,
     )
 
 if st.button("✨ Generate Initial Flashcards", type="primary"):
@@ -1420,6 +1489,12 @@ if st.session_state.cards_data:
                     # Download once on the following render, then clear this
                     # request so ordinary reruns never download it again.
                     st.session_state.apkg_auto_download_signature = export_signature
+                    # The generated package remains available for the automatic
+                    # download, while all disposable browser draft data is reset.
+                    # Language and No Assimil are separate durable cookies.
+                    st.session_state.cleanup_after_successful_export = True
+                    clear_browser_draft = True
+                    clear_target_words = True
                 except Exception as error:
                     st.session_state.pop("prepared_apkg", None)
                     st.session_state.pop("prepared_apkg_signature", None)
@@ -1474,6 +1549,20 @@ if browser_draft and not clear_browser_draft:
 _draft_storage(
     action=draft_write_action,
     draft=browser_draft,
+    storage_key="assimil-flashcard-draft-v1",
     key="assimil_draft_writer",
+    default=None,
+)
+
+target_words_write_action = "noop"
+if clear_target_words:
+    target_words_write_action = "clear"
+elif st.session_state.get("target_words_storage_applied"):
+    target_words_write_action = "write"
+_draft_storage(
+    action=target_words_write_action,
+    draft=st.session_state.target_words,
+    storage_key=TARGET_WORDS_STORAGE_KEY,
+    key="assimil_target_words_writer",
     default=None,
 )
