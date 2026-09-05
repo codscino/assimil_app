@@ -841,31 +841,27 @@ if st.session_state.cards_data:
                 if preview_audio := st.session_state.get("elevenlabs_preview_audio"):
                     st.audio(preview_audio, format="audio/mpeg")
 
-            if st.button(
-                "📦 Approve All & Download .apkg Package",
+            cards_for_export = [dict(card) for card in st.session_state.cards_data]
+            lesson_for_export = st.session_state.selected_lesson
+            tag_for_export = st.session_state.shared_tag
+            voice_for_export = selected_voice_id
+            lesson_num = re.sub(r'\D', '', lesson_for_export) or "01"
+
+            def generate_package_on_download():
+                return build_anki_apkg(
+                    cards_for_export,
+                    lesson_for_export,
+                    elevenlabs_api_key,
+                    voice_for_export,
+                    shared_tag=tag_for_export,
+                ).getvalue()
+
+            st.download_button(
+                label="📦 Approve All & Download .apkg Package",
+                data=generate_package_on_download,
+                file_name=f"Assimil_Lesson_{lesson_num.zfill(2)}.apkg",
+                mime="application/octet-stream",
                 type="primary",
                 use_container_width=True,
-            ):
-                try:
-                    with st.spinner("Generating French pronunciations and packaging deck..."):
-                        st.session_state.apkg_buffer = build_anki_apkg(
-                            st.session_state.cards_data,
-                            st.session_state.selected_lesson,
-                            elevenlabs_api_key,
-                            selected_voice_id,
-                            shared_tag=st.session_state.shared_tag,
-                        ).getvalue()
-                    st.success("French pronunciations are ready. Download your package below.")
-                except requests.RequestException as error:
-                    st.error(f"Could not generate French pronunciations: {error}")
-
-            if apkg_bytes := st.session_state.get("apkg_buffer"):
-                lesson_num = re.sub(r'\D', '', st.session_state.selected_lesson) or "01"
-                st.download_button(
-                    label="📥 Download .apkg Package",
-                    data=apkg_bytes,
-                    file_name=f"Assimil_Lesson_{lesson_num.zfill(2)}.apkg",
-                    mime="application/octet-stream",
-                    use_container_width=True,
-                    on_click="ignore",
-                )
+                on_click="ignore",
+            )
