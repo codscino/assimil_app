@@ -43,15 +43,17 @@ try {
     console.log("The app is not showing the sleep screen.");
   }
 
-  // Cold starts can take several minutes while Streamlit rebuilds the app.
-  // Target the actual heading so a partially rendered shell is not mistaken
-  // for a ready app.
-  await page.locator("h1").filter({
-    hasText: /Assimil French Anki Generator/,
-  }).first().waitFor({
-    state: "visible",
-    timeout: 120_000,
-  });
+  // Streamlit Community Cloud renders the actual app in this iframe. Searching
+  // the outer page for the heading times out even when the app is fully loaded.
+  await page
+    .frameLocator('iframe[title="streamlitApp"]')
+    .locator("h1")
+    .filter({ hasText: /Assimil French Anki Generator/ })
+    .first()
+    .waitFor({
+      state: "visible",
+      timeout: 120_000,
+    });
 
   const bodyText = await page.locator("body").innerText();
   if (/this app has gone to sleep|yes, get this app back up/i.test(bodyText)) {
