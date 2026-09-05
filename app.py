@@ -8,6 +8,7 @@ import re
 import io
 import html
 import hashlib
+import base64
 import tempfile
 import unicodedata
 from datetime import datetime, timedelta
@@ -1182,12 +1183,15 @@ if st.session_state.cards_data:
         "Cards start collapsed. Select Edit card to edit or regenerate it; edits save automatically."
     )
 
-    st.session_state.shared_tag = st.text_input(
-        "Shared tag for all cards",
-        value=st.session_state.shared_tag,
-        help="This tag will be applied to every flashcard in the deck.",
-        key="shared_tag_editor"
-    )
+    # Keep this control aligned with the half-width dropdowns used elsewhere.
+    tag_col, _ = st.columns(2)
+    with tag_col:
+        st.session_state.shared_tag = st.text_input(
+            "Shared tag for all cards",
+            value=st.session_state.shared_tag,
+            help="This tag will be applied to every flashcard in the deck.",
+            key="shared_tag_editor",
+        )
     
     col_actions1, col_actions2 = st.columns([1, 1])
     with col_actions2:
@@ -1396,7 +1400,7 @@ if st.session_state.cards_data:
                 st.session_state.pop("prepared_apkg_signature", None)
 
             if st.button(
-                "📦 Approve All & Prepare Download",
+                "📦 Approve All & Download .apkg",
                 type="primary",
                 use_container_width=True,
             ):
@@ -1413,21 +1417,42 @@ if st.session_state.cards_data:
                             target_language_code=target_language_code,
                         ).getvalue()
                     st.session_state.prepared_apkg_signature = export_signature
+                    # Download once on the following render, then clear this
+                    # request so ordinary reruns never download it again.
+                    st.session_state.apkg_auto_download_signature = export_signature
                 except Exception as error:
                     st.session_state.pop("prepared_apkg", None)
                     st.session_state.pop("prepared_apkg_signature", None)
+                    st.session_state.pop("apkg_auto_download_signature", None)
                     st.error(f"Could not prepare the Anki package: {error}")
 
             if prepared_apkg := st.session_state.get("prepared_apkg"):
-                st.success("Your package is ready to download.")
-                st.download_button(
-                    label="⬇️ Download .apkg Package",
-                    data=prepared_apkg,
-                    file_name=export_file_name,
-                    mime="application/octet-stream",
-                    use_container_width=True,
-                    on_click="ignore",
-                )
+                if (
+                    st.session_state.get("apkg_auto_download_signature")
+                    == export_signature
+                ):
+                    apkg_base64 = base64.b64encode(prepared_apkg).decode("ascii")
+                    components.html(
+                        f'''<script>
+                        const encodedPackage = {json.dumps(apkg_base64)};
+                        const binary = atob(encodedPackage);
+                        const bytes = Uint8Array.from(
+                          binary, (character) => character.charCodeAt(0)
+                        );
+                        const packageUrl = URL.createObjectURL(new Blob(
+                          [bytes], {{ type: "application/octet-stream" }}
+                        ));
+                        const link = document.createElement("a");
+                        link.href = packageUrl;
+                        link.download = {json.dumps(export_file_name)};
+                        document.body.appendChild(link);
+                        link.click();
+                        link.remove();
+                        URL.revokeObjectURL(packageUrl);
+                        </script>''',
+                        height=0,
+                    )
+                    st.session_state.pop("apkg_auto_download_signature", None)
 
 # Write only card data and ordinary strings to localStorage. API keys, audio,
 # and the prepared package deliberately remain server-side.
