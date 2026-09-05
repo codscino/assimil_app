@@ -44,10 +44,13 @@ try {
   }
 
   // Cold starts can take several minutes while Streamlit rebuilds the app.
-  // Wait for text from this app rather than only the generic Streamlit shell.
-  await page.getByText(/Assimil French Anki Generator/).first().waitFor({
+  // Target the actual heading so a partially rendered shell is not mistaken
+  // for a ready app.
+  await page.locator("h1").filter({
+    hasText: /Assimil French Anki Generator/,
+  }).first().waitFor({
     state: "visible",
-    timeout: 240_000,
+    timeout: 300_000,
   });
 
   const bodyText = await page.locator("body").innerText();
