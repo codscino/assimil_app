@@ -1,4 +1,5 @@
-.streamlit/
+.streamlit/*
+!.streamlit/config.toml
 __pycache__/
 *.pyc
 *.apkg

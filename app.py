@@ -15,7 +15,9 @@ from pathlib import Path
 
 import requests
 import extra_streamlit_components as stx
+import streamlit.components.v1 as components
 
+from draft_state import build_draft_json, restore_draft_json
 from flashcard_regeneration import build_regeneration_prompt
 
 # -----------------------------------------------------------------------------
@@ -36,6 +38,11 @@ TARGET_LANGUAGES = {
     "nl": {"name": "Dutch", "flag": "🇳🇱", "deck_code": "NL"},
 }
 LANGUAGE_COOKIE = "assimil_target_language"
+
+_draft_storage = components.declare_component(
+    "assimil_draft_storage",
+    path=str(Path(__file__).parent / "components" / "draft_storage"),
+)
 
 FRONT_FR2EN = r"""
 {{#fr_phrase}}
@@ -664,7 +671,7 @@ def generate_flashcards_with_gemini(
     target_language="English",
 ):
     client = genai.Client(api_key=api_key)
-    lesson_tag_main = "french_practice" if no_assimil_mode else get_lesson_tag(lesson_name)
+    lesson_tag_main = "" if no_assimil_mode else get_lesson_tag(lesson_name)
 
     if no_assimil_mode:
         context = """
@@ -731,7 +738,7 @@ def regenerate_single_card(
     target_language="English",
 ):
     client = genai.Client(api_key=api_key)
-    lesson_tag_main = "french_practice" if no_assimil_mode else get_lesson_tag(lesson_name)
+    lesson_tag_main = "" if no_assimil_mode else get_lesson_tag(lesson_name)
 
     prompt = build_regeneration_prompt(
         lesson_name,
@@ -820,12 +827,13 @@ def build_anki_apkg(
     shared_tag=None,
     target_language_code="en",
 ):
-    lesson_num = re.sub(r'\D', '', lesson_name) or "01"
-    lesson_num_padded = lesson_num.zfill(2)
-
-    tag_name = (shared_tag or get_lesson_tag(lesson_name)).strip()
-    if not tag_name:
-        tag_name = f"assimil_lesson_{lesson_num_padded}"
+    # An empty string intentionally means "no tag" (used by free practice).
+    # Only an omitted value should fall back to the selected lesson tag.
+    tag_name = (
+        get_lesson_tag(lesson_name)
+        if shared_tag is None
+        else shared_tag.strip()
+    )
     
     language = TARGET_LANGUAGES[target_language_code]
     deck_code = language["deck_code"]
@@ -876,7 +884,7 @@ def build_anki_apkg(
                     item.get("extra_notes", ""),
                     audio_field,
                 ],
-                tags=[tag_name],
+                tags=[tag_name] if tag_name else [],
             )
             deck.add_note(note)
 
@@ -913,7 +921,7 @@ with header_col1:
 
 with header_col_language:
     target_language_code = st.selectbox(
-        "Language",
+        "Translate to",
         options=list(TARGET_LANGUAGES),
         key="target_language",
         format_func=lambda code: (
@@ -951,6 +959,7 @@ if previous_language != target_language_code and st.session_state.get("cards_dat
     st.session_state.cards_data = None
     st.session_state.card_regeneration_baselines = []
     st.session_state.card_form_versions = {}
+    st.session_state.clear_browser_draft = True
     st.toast("Language changed. Generate a new translated deck.", icon="🌐")
 st.session_state.cards_target_language = target_language_code
 
@@ -981,7 +990,7 @@ if "shared_tag" not in st.session_state:
     st.session_state.shared_tag = (
         get_lesson_tag(st.session_state.selected_lesson)
         if lesson_numbers
-        else "french_practice"
+        else ""
     )
 if "last_no_assimil_mode" not in st.session_state:
     st.session_state.last_no_assimil_mode = st.session_state.no_assimil_mode
@@ -991,6 +1000,34 @@ if "card_form_versions" not in st.session_state:
     st.session_state.card_form_versions = {}
 if "card_regeneration_baselines" not in st.session_state:
     st.session_state.card_regeneration_baselines = []
+
+# The browser keeps a validated copy of the current draft. If Safari returns
+# after Streamlit has discarded its WebSocket session, reloading the page
+# restores the cards into the new session.
+clear_browser_draft = st.session_state.pop("clear_browser_draft", False)
+stored_draft = _draft_storage(
+    action="clear" if clear_browser_draft else "read",
+    draft=None,
+    key="assimil_draft_reader",
+    default=None,
+)
+if not clear_browser_draft and not st.session_state.cards_data:
+    restored_draft = restore_draft_json(
+        stored_draft,
+        target_language_code,
+        lessons,
+    )
+    if restored_draft:
+        st.session_state.update(restored_draft)
+        st.session_state.last_no_assimil_mode = restored_draft["no_assimil_mode"]
+        st.session_state.shared_tag_editor = restored_draft["shared_tag"]
+        if not restored_draft["no_assimil_mode"]:
+            st.session_state.lesson_number_picker = get_lesson_number(
+                restored_draft["selected_lesson"]
+            )
+        st.session_state.card_form_epoch += 1
+        st.session_state.card_form_versions = {}
+        st.toast("Recovered your saved card draft.", icon="↩️")
 
 
 def save_card_field(card_index, field_name, widget_key):
@@ -1029,7 +1066,7 @@ with c1:
     )
     if no_assimil_mode != st.session_state.last_no_assimil_mode:
         new_tag = (
-            "french_practice"
+            ""
             if no_assimil_mode
             else get_lesson_tag(st.session_state.selected_lesson)
         )
@@ -1167,6 +1204,9 @@ if st.session_state.cards_data:
             st.session_state.card_regeneration_baselines = []
             st.session_state.card_form_epoch += 1
             st.session_state.card_form_versions = {}
+            st.session_state.pop("prepared_apkg", None)
+            st.session_state.pop("prepared_apkg_signature", None)
+            st.session_state.clear_browser_draft = True
             st.rerun()
 
     cards_list = st.session_state.cards_data
@@ -1345,22 +1385,74 @@ if st.session_state.cards_data:
                 )
             )
 
-            def generate_package_on_download():
-                return build_anki_apkg(
-                    cards_for_export,
-                    lesson_for_export,
-                    elevenlabs_api_key,
-                    voice_for_export,
-                    shared_tag=tag_for_export,
-                    target_language_code=target_language_code,
-                ).getvalue()
+            export_signature = hashlib.sha256(
+                json.dumps(
+                    {
+                        "cards": cards_for_export,
+                        "lesson": lesson_for_export,
+                        "tag": tag_for_export,
+                        "voice": voice_for_export,
+                        "language": target_language_code,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest()
 
-            st.download_button(
-                label="📦 Approve All & Download .apkg Package",
-                data=generate_package_on_download,
-                file_name=export_file_name,
-                mime="application/octet-stream",
+            if st.session_state.get("prepared_apkg_signature") != export_signature:
+                st.session_state.pop("prepared_apkg", None)
+                st.session_state.pop("prepared_apkg_signature", None)
+
+            if st.button(
+                "📦 Approve All & Prepare Download",
                 type="primary",
                 use_container_width=True,
-                on_click="ignore",
-            )
+            ):
+                try:
+                    with st.spinner(
+                        "Generating French pronunciations and packaging deck..."
+                    ):
+                        st.session_state.prepared_apkg = build_anki_apkg(
+                            cards_for_export,
+                            lesson_for_export,
+                            elevenlabs_api_key,
+                            voice_for_export,
+                            shared_tag=tag_for_export,
+                            target_language_code=target_language_code,
+                        ).getvalue()
+                    st.session_state.prepared_apkg_signature = export_signature
+                except Exception as error:
+                    st.session_state.pop("prepared_apkg", None)
+                    st.session_state.pop("prepared_apkg_signature", None)
+                    st.error(f"Could not prepare the Anki package: {error}")
+
+            if prepared_apkg := st.session_state.get("prepared_apkg"):
+                st.success("Your package is ready to download.")
+                st.download_button(
+                    label="⬇️ Download .apkg Package",
+                    data=prepared_apkg,
+                    file_name=export_file_name,
+                    mime="application/octet-stream",
+                    use_container_width=True,
+                    on_click="ignore",
+                )
+
+# Write only card data and ordinary strings to localStorage. API keys, audio,
+# and the prepared package deliberately remain server-side.
+browser_draft = build_draft_json(
+    st.session_state.cards_data,
+    st.session_state.card_regeneration_baselines,
+    target_language_code,
+    st.session_state.get("selected_lesson", "French Practice"),
+    st.session_state.shared_tag,
+    st.session_state.no_assimil_mode,
+)
+draft_write_action = "clear" if clear_browser_draft else "noop"
+if browser_draft and not clear_browser_draft:
+    draft_write_action = "write"
+_draft_storage(
+    action=draft_write_action,
+    draft=browser_draft,
+    key="assimil_draft_writer",
+    default=None,
+)

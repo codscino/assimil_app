@@ -1,0 +1,4 @@
+[server]
+# Give mobile browsers a practical reconnection window without retaining
+# inactive server sessions for too long. Browser-local recovery is the fallback.
+disconnectedSessionTTL = 900

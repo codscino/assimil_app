@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <script>
+      const STORAGE_KEY = "assimil-flashcard-draft-v1";
+      let hasSentValue = false;
+      let lastSentValue;
+
+      function send(type, data = {}) {
+        window.parent.postMessage(
+          { isStreamlitMessage: true, type, ...data },
+          "*"
+        );
+      }
+
+      function setValue(value) {
+        if (hasSentValue && value === lastSentValue) return;
+        hasSentValue = true;
+        lastSentValue = value;
+        send("streamlit:setComponentValue", { value });
+      }
+
+      function readStorage(key) {
+        try {
+          return localStorage.getItem(key);
+        } catch (_) {
+          return null;
+        }
+      }
+
+      function writeStorage(key, value) {
+        try {
+          localStorage.setItem(key, value);
+        } catch (_) {}
+      }
+
+      function removeStorage(key) {
+        try {
+          localStorage.removeItem(key);
+        } catch (_) {}
+      }
+
+      window.addEventListener("message", event => {
+        if (event.data?.type !== "streamlit:render") return;
+        const args = event.data.args || {};
+
+        if (args.action === "clear") {
+          removeStorage(STORAGE_KEY);
+          setValue(null);
+        } else if (args.action === "write" && typeof args.draft === "string") {
+          // The writer is intentionally one-way. Returning the whole draft to
+          // Python here would cause an unnecessary app rerun after every edit.
+          writeStorage(STORAGE_KEY, args.draft);
+        } else if (args.action === "read") {
+          setValue(readStorage(STORAGE_KEY));
+        }
+        send("streamlit:setFrameHeight", { height: 0 });
+      });
+
+      send("streamlit:componentReady", { apiVersion: 1 });
+      send("streamlit:setFrameHeight", { height: 0 });
+    </script>
+  </head>
+  <body></body>
+</html>
