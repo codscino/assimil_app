@@ -13,127 +13,155 @@ from flashcard_regeneration import build_regeneration_prompt
 # 1. ANKI MODEL DEFINITION (Raw Strings)
 # -----------------------------------------------------------------------------
 MODEL_ID = 1607392319
+FR2EN_DECK_ID = 2059500001
+EN2FR_DECK_ID = 2059500002
 
 FRONT_FR2EN = r"""
-<div id="fr-target-data" style="display:none;">{{fr_word}}</div>
-
 {{#fr_phrase}}
-<div id="fr-phrase">{{fr_phrase}}</div>
+<div class="phrase">{{fr_phrase}}</div>
+<span class="target-word">{{text:fr_word}}</span>
+{{tts fr_FR:fr_phrase}}
 {{/fr_phrase}}
+
 {{^fr_phrase}}
-<div id="fr-word">{{fr_word}}</div>
+<div>{{fr_word}}</div>
+{{tts fr_FR:fr_word}}
 {{/fr_phrase}}
 
 <br><br>
 {{type:en_word}}
 
 <script>
-(function() {
-    var phraseDiv = document.getElementById("fr-phrase");
-    var targetData = document.getElementById("fr-target-data");
-    if (phraseDiv && targetData) {
-        var word = targetData.textContent.trim();
-        if (word) { 
-            var escapedWord = word.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-            var regex = new RegExp('(' + escapedWord + ')', "gi");
-            phraseDiv.innerHTML = phraseDiv.innerHTML.replace(regex, "<span class='highlight'>$1</span>");
-        }
-    }
-})();
+const phrase = document.querySelector(".phrase");
+const word = document.querySelector(".target-word")?.textContent.trim();
+
+if (phrase && word) {
+  const escaped = word.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
+  phrase.innerHTML = phrase.innerHTML.replace(
+    new RegExp(escaped, "gi"),
+    "<span class='highlight'>$&</span>"
+  );
+}
 </script>
 """
 
 BACK_FR2EN = r"""
-<div id="fr-target-back-data" style="display:none;">{{fr_word}}</div>
-
 {{#fr_phrase}}
-<div id="fr-phrase-back">{{fr_phrase}}</div>
+<div class="phrase">{{fr_phrase}}</div>
+<span class="target-word">{{text:fr_word}}</span>
 {{/fr_phrase}}
+
 {{^fr_phrase}}
-<div id="fr-word-back">{{fr_word}}</div>
+<div>{{fr_word}}</div>
 {{/fr_phrase}}
 
 <hr id="answer">
 {{type:en_word}}
 
-<div style="font-size: 1.1em; color: #555; margin-top: 8px;">
-{{en_phrase}}
+<div class="translation">
+  {{#en_phrase}}{{en_phrase}}{{/en_phrase}}
+  {{^en_phrase}}{{en_word}}{{/en_phrase}}
 </div>
+
+{{#en_phrase}}
+{{tts en_US:en_phrase}}
+{{/en_phrase}}
+{{^en_phrase}}
+{{tts en_US:en_word}}
+{{/en_phrase}}
 
 {{#extra_notes}}
-<div class="notes">
-note: {{extra_notes}}
-</div>
+<div class="notes">Note: {{extra_notes}}</div>
 {{/extra_notes}}
 
-{{#fr_phrase}}
-  {{tts fr_FR:fr_phrase}}
-{{/fr_phrase}}
-{{^fr_phrase}}
-  {{tts fr_FR:fr_word}}
-{{/fr_phrase}}
-
 <script>
-(function() {
-    var phraseDiv = document.getElementById("fr-phrase-back");
-    var targetData = document.getElementById("fr-target-back-data");
-    if (phraseDiv && targetData) {
-        var word = targetData.textContent.trim();
-        if (word) {
-            var escapedWord = word.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-            var regex = new RegExp('(' + escapedWord + ')', "gi");
-            phraseDiv.innerHTML = phraseDiv.innerHTML.replace(regex, "<span class='highlight'>$1</span>");
-        }
-    }
-})();
+const phrase = document.querySelector(".phrase");
+const word = document.querySelector(".target-word")?.textContent.trim();
+
+if (phrase && word) {
+  const escaped = word.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
+  phrase.innerHTML = phrase.innerHTML.replace(
+    new RegExp(escaped, "gi"),
+    "<span class='highlight'>$&</span>"
+  );
+}
 </script>
 """
 
 FRONT_EN2FR = r"""
 {{#en_phrase}}
-<div id="en-phrase">{{en_phrase}}</div>
+<div class="phrase">{{en_phrase}}</div>
+<span class="target-word">{{text:en_word}}</span>
+{{tts en_US:en_phrase}}
 {{/en_phrase}}
+
 {{^en_phrase}}
-<div id="en-word">{{en_word}}</div>
+<div>{{en_word}}</div>
+{{tts en_US:en_word}}
 {{/en_phrase}}
 
 {{#extra_notes}}
-<div class="notes">
-note: {{extra_notes}}
-</div>
+<div class="notes">Note: {{extra_notes}}</div>
 {{/extra_notes}}
 
 <br><br>
 {{type:fr_word}}
+
+<script>
+const phrase = document.querySelector(".phrase");
+const word = document.querySelector(".target-word")?.textContent.trim();
+
+if (phrase && word) {
+  const escaped = word.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
+  phrase.innerHTML = phrase.innerHTML.replace(
+    new RegExp(escaped, "gi"),
+    "<span class='highlight'>$&</span>"
+  );
+}
+</script>
 """
 
 BACK_EN2FR = r"""
 {{#en_phrase}}
-<div id="en-phrase-back">{{en_phrase}}</div>
+<div class="phrase">{{en_phrase}}</div>
+<span class="target-word">{{text:en_word}}</span>
 {{/en_phrase}}
+
 {{^en_phrase}}
-<div id="en-word-back">{{en_word}}</div>
+<div>{{en_word}}</div>
 {{/en_phrase}}
 
 {{#extra_notes}}
-<div class="notes">
-note: {{extra_notes}}
-</div>
+<div class="notes">Note: {{extra_notes}}</div>
 {{/extra_notes}}
 
 <hr id="answer">
 {{type:fr_word}}
 
-<div style="font-size: 1.1em; color: #555; margin-top: 8px;">
-{{fr_phrase}}
+<div class="translation">
+  {{#fr_phrase}}{{fr_phrase}}{{/fr_phrase}}
+  {{^fr_phrase}}{{fr_word}}{{/fr_phrase}}
 </div>
 
 {{#fr_phrase}}
-  {{tts fr_FR:fr_phrase}}
+{{tts fr_FR:fr_phrase}}
 {{/fr_phrase}}
 {{^fr_phrase}}
-  {{tts fr_FR:fr_word}}
+{{tts fr_FR:fr_word}}
 {{/fr_phrase}}
+
+<script>
+const phrase = document.querySelector(".phrase");
+const word = document.querySelector(".target-word")?.textContent.trim();
+
+if (phrase && word) {
+  const escaped = word.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
+  phrase.innerHTML = phrase.innerHTML.replace(
+    new RegExp(escaped, "gi"),
+    "<span class='highlight'>$&</span>"
+  );
+}
+</script>
 """
 
 CARD_STYLE = r"""
@@ -141,21 +169,29 @@ CARD_STYLE = r"""
   font-family: Arial, sans-serif;
   font-size: 20px;
   text-align: center;
-  color: #222;
-  background-color: #ffffff;
+  color: black;
+  background: white;
+}
+.phrase {
+  margin-bottom: 4px;
+}
+.target-word {
+  display: none;
+}
+.translation {
+  margin-top: 8px;
+  font-size: 0.9em;
+  color: grey;
 }
 .highlight {
-  background-color: #ffe066;
-  color: #000;
+  background: yellow;
+  color: black;
   font-weight: bold;
-  padding: 0 4px;
-  border-radius: 3px;
 }
 .notes {
-  font-size: 0.85em;
-  color: #666;
-  margin-top: 12px;
-  font-style: italic;
+  margin-top: 10px;
+  font-size: 0.8em;
+  color: grey;
 }
 """
 
@@ -170,8 +206,18 @@ anki_model = genanki.Model(
         {'name': 'extra_notes'},
     ],
     templates=[
-        {'name': 'FR -> EN', 'qfmt': FRONT_FR2EN, 'afmt': BACK_FR2EN},
-        {'name': 'EN -> FR', 'qfmt': FRONT_EN2FR, 'afmt': BACK_EN2FR},
+        {
+            'name': 'FR -> EN',
+            'qfmt': FRONT_FR2EN,
+            'afmt': BACK_FR2EN,
+            'did': FR2EN_DECK_ID,
+        },
+        {
+            'name': 'EN -> FR',
+            'qfmt': FRONT_EN2FR,
+            'afmt': BACK_EN2FR,
+            'did': EN2FR_DECK_ID,
+        },
     ],
     css=CARD_STYLE
 )
@@ -199,6 +245,7 @@ def get_lesson_tag(lesson_name):
     lesson_num = re.sub(r'\D', '', lesson_name) or "01"
     lesson_num_padded = lesson_num.zfill(2)
     return f"assimil_lesson_{lesson_num_padded}"
+
 
 def get_lesson_number(lesson_name):
     """Return the numeric part of a lesson key, e.g. ``Lesson 12`` -> 12."""
@@ -326,16 +373,38 @@ def regenerate_single_card(
     new_card["user_notes"] = current_card.get("extra_notes", "")
     return new_card
 
+class DirectionalDeck(genanki.Deck):
+    """Put the reverse card of every note in a fixed second deck.
+
+    genanki initially writes every card from a note to the deck that owns the
+    note. Anki's template deck override is also stored in the model, but the
+    exported card records need their deck IDs set explicitly as well.
+    """
+
+    def __init__(self, deck_id, name, reverse_deck_id):
+        super().__init__(deck_id, name)
+        self.reverse_deck_id = reverse_deck_id
+
+    def write_to_db(self, cursor, timestamp, id_gen):
+        super().write_to_db(cursor, timestamp, id_gen)
+        cursor.execute(
+            "UPDATE cards SET did = ? WHERE did = ? AND ord = 1",
+            (self.reverse_deck_id, self.deck_id),
+        )
+
+
 def build_anki_apkg(cards_data, lesson_name, shared_tag=None):
     lesson_num = re.sub(r'\D', '', lesson_name) or "01"
     lesson_num_padded = lesson_num.zfill(2)
-    deck_id = 2059400000 + int(lesson_num)
 
     tag_name = (shared_tag or get_lesson_tag(lesson_name)).strip()
     if not tag_name:
         tag_name = f"assimil_lesson_{lesson_num_padded}"
     
-    deck = genanki.Deck(deck_id, f"Assimil French::Lesson_{lesson_num_padded}")
+    # FR -> EN is the source deck; DirectionalDeck moves each EN -> FR card
+    # (template ordinal 1) to the fixed reverse deck.
+    deck = DirectionalDeck(FR2EN_DECK_ID, "FR2EN", EN2FR_DECK_ID)
+    reverse_deck = genanki.Deck(EN2FR_DECK_ID, "EN2FR")
     
     for item in cards_data:
         note = genanki.Note(
@@ -352,7 +421,7 @@ def build_anki_apkg(cards_data, lesson_name, shared_tag=None):
         deck.add_note(note)
     
     buffer = io.BytesIO()
-    genanki.Package(deck).write_to_file(buffer)
+    genanki.Package([deck, reverse_deck]).write_to_file(buffer)
     buffer.seek(0)
     return buffer
 
