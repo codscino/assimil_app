@@ -440,6 +440,46 @@ def highlight_target(phrase, target):
     parts.append(html.escape(phrase[original_cursor:]))
     return "".join(parts)
 
+
+def flashcard_summary(phrase, target):
+    """Create a compact, safely escaped expander label for a flashcard.
+
+    Streamlit expanders support its colour-background Markdown directive, so the
+    target can remain visible even while the card editor is collapsed.
+    """
+    def escape_label_markdown(value):
+        # Escape the Markdown constructs that could otherwise change the label.
+        return re.sub(r"([\\`*_{}\[\]()<>#+\-.!|])", r"\\\1", value)
+
+    if not phrase or not target:
+        return escape_label_markdown(phrase or "New Card")
+
+    normalized_phrase, positions = normalize_with_positions(phrase)
+    normalized_target, _ = normalize_with_positions(target)
+    if not normalized_target:
+        return escape_label_markdown(phrase)
+
+    parts = []
+    original_cursor = 0
+    search_cursor = 0
+    while True:
+        match_index = normalized_phrase.find(normalized_target, search_cursor)
+        if match_index == -1:
+            break
+        match_start = positions[match_index][0]
+        match_end = positions[match_index + len(normalized_target) - 1][1]
+        parts.append(escape_label_markdown(phrase[original_cursor:match_start]))
+        highlighted_text = escape_label_markdown(phrase[match_start:match_end])
+        parts.append(f":orange-background[{highlighted_text}]")
+        original_cursor = match_end
+        search_cursor = match_index + len(normalized_target)
+
+    if not parts:
+        return escape_label_markdown(phrase)
+    parts.append(escape_label_markdown(phrase[original_cursor:]))
+    return "".join(parts)
+
+
 def parse_input_line(line):
     match = re.match(r'^(.*?)\s*\((.*)\)\s*$', line)
     if match:
@@ -903,7 +943,7 @@ if st.session_state.cards_data:
     st.divider()
     st.subheader("2. Review, Edit & Regenerate Cards")
     st.caption(
-        "Edits save automatically. Open a card to edit it, then regenerate it if needed."
+        "Cards start collapsed. Open a French phrase to edit it or regenerate it; edits save automatically."
     )
 
     st.session_state.shared_tag = st.text_input(
@@ -927,9 +967,10 @@ if st.session_state.cards_data:
 
     for idx, card in enumerate(cards_list):
         with st.expander(
-            f"📌 Card {idx + 1}: **{card.get('fr_word', 'New Card')}** ➔ "
-            f"{card.get('en_word', '')}",
-            expanded=True,
+            flashcard_summary(
+                card.get("fr_phrase", ""), card.get("fr_word", "")
+            ),
+            expanded=False,
         ):
             with st.container(key=f"card-editor-{idx}"):
                 form_version = st.session_state.card_form_versions.get(idx, 0)
