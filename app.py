@@ -40,6 +40,22 @@ FRONT_FR2EN = r"""
 {{type:en_word}}
 
 <script>
+// Retain the response across Anki's front-to-back render so the answer side
+// can apply our more forgiving comparison.
+(() => {
+  const input = document.getElementById("typeans");
+  if (!input) return;
+  const key = "assimil-typed-answer";
+  const remember = () => {
+    try { sessionStorage.setItem(key, input.value); } catch (_) {}
+  };
+  remember();
+  input.addEventListener("input", remember);
+  input.addEventListener("change", remember);
+})();
+</script>
+
+<script>
 const phrase = document.querySelector(".phrase");
 const word = document.querySelector(".target-word")?.textContent.trim();
 
@@ -78,6 +94,33 @@ BACK_FR2EN = r"""
 
 <hr id="answer">
 {{type:en_word}}
+
+<script>
+// Make the typed-answer display ignore casing, whitespace, and diacritics.
+(() => {
+  const answer = document.getElementById("typeans");
+  const expected = document.querySelector(".target-word")?.textContent ?? "";
+  const key = "assimil-typed-answer";
+  let entered;
+  try { entered = sessionStorage.getItem(key); sessionStorage.removeItem(key); } catch (_) {}
+  if (!answer || entered === null || !expected) return;
+
+  const normalize = (value) => String(value).normalize("NFKD")
+    .replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/gu, "");
+  const correct = normalize(entered) === normalize(expected);
+  answer.replaceChildren();
+  const response = document.createElement("code");
+  response.className = correct ? "typeGood" : "typeBad";
+  response.textContent = entered || "(no answer)";
+  answer.append(response);
+  if (!correct) {
+    const solution = document.createElement("div");
+    solution.className = "typeMissed";
+    solution.textContent = expected;
+    answer.append(solution);
+  }
+})();
+</script>
 
 <div class="translation">
   {{#en_phrase}}{{en_phrase}}{{/en_phrase}}
@@ -156,6 +199,22 @@ FRONT_EN2FR = r"""
 {{type:fr_word}}
 
 <script>
+// Retain the response across Anki's front-to-back render so the answer side
+// can apply our more forgiving comparison.
+(() => {
+  const input = document.getElementById("typeans");
+  if (!input) return;
+  const key = "assimil-typed-answer";
+  const remember = () => {
+    try { sessionStorage.setItem(key, input.value); } catch (_) {}
+  };
+  remember();
+  input.addEventListener("input", remember);
+  input.addEventListener("change", remember);
+})();
+</script>
+
+<script>
 const phrase = document.querySelector(".phrase");
 const word = document.querySelector(".target-word")?.textContent.trim();
 
@@ -216,6 +275,33 @@ BACK_EN2FR = r"""
 
 <hr id="answer">
 {{type:fr_word}}
+
+<script>
+// Make the typed-answer display ignore casing, whitespace, and diacritics.
+(() => {
+  const answer = document.getElementById("typeans");
+  const expected = document.querySelector(".target-word")?.textContent ?? "";
+  const key = "assimil-typed-answer";
+  let entered;
+  try { entered = sessionStorage.getItem(key); sessionStorage.removeItem(key); } catch (_) {}
+  if (!answer || entered === null || !expected) return;
+
+  const normalize = (value) => String(value).normalize("NFKD")
+    .replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/gu, "");
+  const correct = normalize(entered) === normalize(expected);
+  answer.replaceChildren();
+  const response = document.createElement("code");
+  response.className = correct ? "typeGood" : "typeBad";
+  response.textContent = entered || "(no answer)";
+  answer.append(response);
+  if (!correct) {
+    const solution = document.createElement("div");
+    solution.className = "typeMissed";
+    solution.textContent = expected;
+    answer.append(solution);
+  }
+})();
+</script>
 
 <div class="translation">
   {{#fr_phrase}}{{fr_phrase}}{{/fr_phrase}}
@@ -916,6 +1002,14 @@ if st.session_state.cards_data:
             padding-top: 0.35rem;
             padding-bottom: 0.35rem;
         }
+        /* Make the card action obvious: down means it can be opened; up means
+           the editor is already showing. Streamlit normally uses right/down. */
+        div[data-testid="stExpander"] details > summary svg {
+            transform: rotate(90deg);
+        }
+        div[data-testid="stExpander"] details[open] > summary svg {
+            transform: rotate(180deg);
+        }
         @media (max-width: 640px) {
             /* Streamlit columns do not automatically stack on small screens. */
             [class*="st-key-card-editor-"] [data-testid="stHorizontalBlock"] {
@@ -941,7 +1035,7 @@ if st.session_state.cards_data:
     st.divider()
     st.subheader("2. Review, Edit & Regenerate Cards")
     st.caption(
-        "Cards start collapsed. Open a French phrase to edit it or regenerate it; edits save automatically."
+        "Cards start collapsed. Select Edit card to edit or regenerate it; edits save automatically."
     )
 
     st.session_state.shared_tag = st.text_input(
@@ -965,7 +1059,8 @@ if st.session_state.cards_data:
 
     for idx, card in enumerate(cards_list):
         with st.expander(
-            flashcard_summary(
+            "Edit card · "
+            + flashcard_summary(
                 card.get("fr_phrase", ""), card.get("fr_word", "")
             ),
             expanded=False,
