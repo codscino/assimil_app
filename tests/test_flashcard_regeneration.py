@@ -52,6 +52,19 @@ class RegenerationContextTests(unittest.TestCase):
         self.assertIn("Primary source of truth: French phrase (`fr_phrase`)", prompt)
         self.assertIn("`fr_word` > `fr_phrase` > `en_word`", prompt)
 
+    def test_free_practice_prompt_excludes_lesson_reference(self):
+        prompt = build_regeneration_prompt(
+            "French Practice",
+            "french_practice",
+            ["This lesson text must not be used"],
+            self.previous,
+            self.previous,
+            no_assimil_mode=True,
+        )
+
+        self.assertIn("free French practice", prompt)
+        self.assertNotIn("This lesson text must not be used", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

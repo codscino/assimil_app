@@ -34,7 +34,9 @@ def regeneration_source(previous_card, current_card):
     return None, changed_fields
 
 
-def build_regeneration_prompt(lesson_name, lesson_tag, lesson_data, previous_card, current_card):
+def build_regeneration_prompt(
+    lesson_name, lesson_tag, lesson_data, previous_card, current_card, no_assimil_mode=False
+):
     """Build a prompt based on the values submitted from a flashcard form."""
     source_field, changed_fields = regeneration_source(previous_card, current_card)
     source_description = (
@@ -48,15 +50,22 @@ def build_regeneration_prompt(lesson_name, lesson_tag, lesson_data, previous_car
         for field in (*CARD_CONTENT_FIELDS, "extra_notes")
     }
 
-    return f"""
-    You are an expert French tutor refreshing one Assimil Anki flashcard.
-
-    Lesson context:
+    context = (
+        """Practice context: free French practice with no Assimil lesson reference.
+    Invent a pleasant, useful, natural sentence suitable for a French learner."""
+        if no_assimil_mode
+        else f"""Lesson context:
     - Lesson: {lesson_name}
     - Tag: `{lesson_tag}`
 
     Reference sentences from this lesson:
-    {json.dumps(lesson_data, ensure_ascii=False, indent=2)}
+    {json.dumps(lesson_data, ensure_ascii=False, indent=2)}"""
+    )
+
+    return f"""
+    You are an expert French tutor refreshing one Assimil Anki flashcard.
+
+    {context}
 
     Current flashcard values submitted by the user:
     {json.dumps(current_content, ensure_ascii=False, indent=2)}

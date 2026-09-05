@@ -349,8 +349,12 @@ def load_lessons():
     The JSON is small, and caching this no-argument function can otherwise keep
     serving an earlier version after lessons.json is updated on a deployment.
     """
-    with open("lessons.json", "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open("lessons.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        # Free-practice mode deliberately does not need an Assimil lesson file.
+        return {}
 
 def get_lesson_tag(lesson_name):
     lesson_num = re.sub(r'\D', '', lesson_name) or "01"
@@ -478,19 +482,33 @@ def parse_user_input(raw_text):
 
     return items
 
-def generate_flashcards_with_gemini(api_key, model_name, lesson_name, lesson_data, parsed_items):
+def generate_flashcards_with_gemini(
+    api_key, model_name, lesson_name, lesson_data, parsed_items, no_assimil_mode=False
+):
     client = genai.Client(api_key=api_key)
-    lesson_tag_main = get_lesson_tag(lesson_name)
+    lesson_tag_main = "french_practice" if no_assimil_mode else get_lesson_tag(lesson_name)
 
-    prompt = f"""
-    You are an expert French tutor creating Anki flashcards for the Assimil method.
-
+    if no_assimil_mode:
+        context = """
+    Practice context:
+    - This is free French practice, with no Assimil lesson reference.
+    - Invent a pleasant, useful sentence suitable for a French learner around each
+      target word or expression. Keep it natural, clear, and memorable.
+        """
+    else:
+        context = f"""
     Lesson context:
     - Lesson name: {lesson_name}
     - Shared tag: `{lesson_tag_main}`
 
     Reference sentences from this lesson:
     {json.dumps(lesson_data, ensure_ascii=False, indent=2)}
+        """
+
+    prompt = f"""
+    You are an expert French tutor creating Anki flashcards for the Assimil method.
+
+    {context}
 
     User target words/phrases:
     {json.dumps(parsed_items, ensure_ascii=False, indent=2)}
@@ -530,9 +548,10 @@ def regenerate_single_card(
     lesson_data,
     previous_card,
     current_card,
+    no_assimil_mode=False,
 ):
     client = genai.Client(api_key=api_key)
-    lesson_tag_main = get_lesson_tag(lesson_name)
+    lesson_tag_main = "french_practice" if no_assimil_mode else get_lesson_tag(lesson_name)
 
     prompt = build_regeneration_prompt(
         lesson_name,
@@ -540,6 +559,7 @@ def regenerate_single_card(
         lesson_data,
         previous_card,
         current_card,
+        no_assimil_mode=no_assimil_mode,
     )
 
     response = client.models.generate_content(
@@ -705,19 +725,27 @@ lesson_numbers = {
     for lesson_name in lessons
     if (number := get_lesson_number(lesson_name)) is not None
 }
-if not lesson_numbers:
-    st.error("No numbered lessons were found in lessons.json.")
-    st.stop()
 lesson_numbers = dict(sorted(lesson_numbers.items()))
 
 if "cards_data" not in st.session_state:
     st.session_state.cards_data = None
-if "selected_lesson" not in st.session_state or st.session_state.selected_lesson not in lessons:
+if "no_assimil_mode" not in st.session_state:
+    st.session_state.no_assimil_mode = not bool(lesson_numbers)
+if lesson_numbers and (
+    "selected_lesson" not in st.session_state
+    or st.session_state.selected_lesson not in lessons
+):
     st.session_state.selected_lesson = next(iter(lesson_numbers.values()))
-if "lesson_number_picker" not in st.session_state:
+if lesson_numbers and "lesson_number_picker" not in st.session_state:
     st.session_state.lesson_number_picker = get_lesson_number(st.session_state.selected_lesson)
 if "shared_tag" not in st.session_state:
-    st.session_state.shared_tag = get_lesson_tag(st.session_state.selected_lesson)
+    st.session_state.shared_tag = (
+        get_lesson_tag(st.session_state.selected_lesson)
+        if lesson_numbers
+        else "french_practice"
+    )
+if "last_no_assimil_mode" not in st.session_state:
+    st.session_state.last_no_assimil_mode = st.session_state.no_assimil_mode
 if "card_form_epoch" not in st.session_state:
     st.session_state.card_form_epoch = 0
 if "card_form_versions" not in st.session_state:
@@ -755,21 +783,50 @@ st.subheader("1. Input Words & Select Lesson")
 c1, c2 = st.columns([1, 2])
 
 with c1:
-    selected_lesson_number = st.select_slider(
-        "Select Assimil Lesson",
-        options=list(lesson_numbers),
-        key="lesson_number_picker",
-        help="Drag the selector or use the arrow keys to move quickly between lessons.",
-    )
-    selected_lesson = lesson_numbers[selected_lesson_number]
-    if selected_lesson != st.session_state.selected_lesson:
-        st.session_state.selected_lesson = selected_lesson
-        new_lesson_tag = get_lesson_tag(selected_lesson)
-        st.session_state.shared_tag = new_lesson_tag
-        # The text input has its own keyed widget state. Keep it in sync here;
-        # otherwise its value from the previous lesson overwrites shared_tag
-        # when the editor is rendered later in this run.
-        st.session_state.shared_tag_editor = new_lesson_tag
+    lesson_picker_col, mode_col = st.columns([3, 2])
+    with mode_col:
+        no_assimil_mode = st.toggle(
+            "No Assimil",
+            key="no_assimil_mode",
+            help="Create free-practice phrases without using lessons.json as a reference.",
+        )
+        if no_assimil_mode != st.session_state.last_no_assimil_mode:
+            new_tag = (
+                "french_practice"
+                if no_assimil_mode
+                else get_lesson_tag(st.session_state.selected_lesson)
+            )
+            st.session_state.shared_tag = new_tag
+            st.session_state.shared_tag_editor = new_tag
+            st.session_state.last_no_assimil_mode = no_assimil_mode
+    with lesson_picker_col:
+        if lesson_numbers:
+            selected_lesson_number = st.select_slider(
+                "Select Assimil Lesson",
+                options=list(lesson_numbers),
+                key="lesson_number_picker",
+                disabled=no_assimil_mode,
+                help="Drag the selector or use the arrow keys to move quickly between lessons.",
+            )
+            selected_lesson = lesson_numbers[selected_lesson_number]
+            if selected_lesson != st.session_state.selected_lesson:
+                st.session_state.selected_lesson = selected_lesson
+                new_lesson_tag = get_lesson_tag(selected_lesson)
+                st.session_state.shared_tag = new_lesson_tag
+                # The text input has its own keyed widget state. Keep it in sync here;
+                # otherwise its value from the previous lesson overwrites shared_tag
+                # when the editor is rendered later in this run.
+                st.session_state.shared_tag_editor = new_lesson_tag
+        elif not no_assimil_mode:
+            st.error("No numbered lessons were found in lessons.json.")
+            st.stop()
+
+    if no_assimil_mode:
+        selected_lesson = "French Practice"
+        lesson_data = None
+        st.caption("Free practice: Gemini will invent a useful French-learning phrase.")
+    else:
+        lesson_data = lessons[selected_lesson]
 
 with c2:
     st.markdown("""
@@ -796,8 +853,9 @@ if st.button("✨ Generate Initial Flashcards", type="primary"):
                     api_key, 
                     model_choice, 
                     selected_lesson, 
-                    lessons[selected_lesson], 
-                    parsed_items
+                    lesson_data,
+                    parsed_items,
+                    no_assimil_mode=no_assimil_mode,
                 )
                 st.session_state.cards_data = cards
                 st.session_state.card_regeneration_baselines = [
@@ -945,10 +1003,11 @@ if st.session_state.cards_data:
                                 updated_card = regenerate_single_card(
                                     api_key,
                                     model_choice,
-                                    st.session_state.selected_lesson,
-                                    lessons[st.session_state.selected_lesson],
+                                    selected_lesson,
+                                    lesson_data,
                                     previous_card=previous_card,
                                     current_card=submitted_card,
+                                    no_assimil_mode=no_assimil_mode,
                                 )
                                 st.session_state.cards_data[idx] = updated_card
                                 st.session_state.card_regeneration_baselines[idx] = dict(
@@ -1027,6 +1086,11 @@ if st.session_state.cards_data:
             tag_for_export = st.session_state.shared_tag
             voice_for_export = selected_voice_id
             lesson_num = re.sub(r'\D', '', lesson_for_export) or "01"
+            export_file_name = (
+                "French_Practice.apkg"
+                if no_assimil_mode
+                else f"Assimil_Lesson_{lesson_num.zfill(2)}.apkg"
+            )
 
             def generate_package_on_download():
                 return build_anki_apkg(
@@ -1040,7 +1104,7 @@ if st.session_state.cards_data:
             st.download_button(
                 label="📦 Approve All & Download .apkg Package",
                 data=generate_package_on_download,
-                file_name=f"Assimil_Lesson_{lesson_num.zfill(2)}.apkg",
+                file_name=export_file_name,
                 mime="application/octet-stream",
                 type="primary",
                 use_container_width=True,
