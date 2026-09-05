@@ -458,6 +458,29 @@ if st.button("✨ Generate Initial Flashcards", type="primary"):
 
 # --- STEP 2: REVIEW & EDIT SECTION ---
 if st.session_state.cards_data:
+    st.markdown(
+        """
+        <style>
+        /* Keep the review list dense, while retaining comfortable tap targets. */
+        div[data-testid="stExpander"] details > summary {
+            padding-top: 0.35rem;
+            padding-bottom: 0.35rem;
+        }
+        @media (max-width: 640px) {
+            /* Streamlit columns do not automatically stack on small screens. */
+            [class*="st-key-card-editor-"] [data-testid="stHorizontalBlock"] {
+                flex-direction: column;
+                gap: 0;
+            }
+            [class*="st-key-card-editor-"] [data-testid="stColumn"] {
+                width: 100% !important;
+                flex: 1 1 100% !important;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     if len(st.session_state.card_regeneration_baselines) != len(
         st.session_state.cards_data
     ):
@@ -467,9 +490,8 @@ if st.session_state.cards_data:
 
     st.divider()
     st.subheader("2. Review, Edit & Regenerate Cards")
-    st.info(
-        "Edits are saved automatically when a field changes. Regenerate and "
-        "Approve All & Download also synchronize the card values first."
+    st.caption(
+        "Edits save automatically. Open a card to edit it, then regenerate it if needed."
     )
 
     st.session_state.shared_tag = st.text_input(
@@ -492,94 +514,97 @@ if st.session_state.cards_data:
     all_widget_keys = {}
 
     for idx, card in enumerate(cards_list):
-        with st.expander(f"📌 Card {idx + 1}: **{card.get('fr_word', 'New Card')}** ➔ {card.get('en_word', '')}", expanded=True):
-            form_version = st.session_state.card_form_versions.get(idx, 0)
-            widget_prefix = f"card_{st.session_state.card_form_epoch}_{idx}_{form_version}"
-            widget_keys = {
-                "fr_word": f"{widget_prefix}_fr_word",
-                "fr_phrase": f"{widget_prefix}_fr_phrase",
-                "en_word": f"{widget_prefix}_en_word",
-                "en_phrase": f"{widget_prefix}_en_phrase",
-                "extra_notes": f"{widget_prefix}_notes",
-            }
-            all_widget_keys[idx] = widget_keys
-            col_fr, col_en, col_opt = st.columns([2, 2, 1])
+        with st.expander(
+            f"📌 Card {idx + 1}: **{card.get('fr_word', 'New Card')}** ➔ "
+            f"{card.get('en_word', '')}",
+            expanded=True,
+        ):
+            with st.container(key=f"card-editor-{idx}"):
+                form_version = st.session_state.card_form_versions.get(idx, 0)
+                widget_prefix = f"card_{st.session_state.card_form_epoch}_{idx}_{form_version}"
+                widget_keys = {
+                    "fr_word": f"{widget_prefix}_fr_word",
+                    "fr_phrase": f"{widget_prefix}_fr_phrase",
+                    "en_word": f"{widget_prefix}_en_word",
+                    "en_phrase": f"{widget_prefix}_en_phrase",
+                    "extra_notes": f"{widget_prefix}_notes",
+                }
+                all_widget_keys[idx] = widget_keys
+                col_fr, col_en, col_opt = st.columns([2, 2, 1])
 
-            with col_fr:
-                st.text_input(
-                    "French Word",
-                    value=card.get("fr_word", ""),
-                    key=widget_keys["fr_word"],
-                    on_change=save_card_field,
-                    args=(idx, "fr_word", widget_keys["fr_word"]),
-                )
-                st.text_area(
-                    "French Sentence",
-                    value=card.get("fr_phrase", ""),
-                    key=widget_keys["fr_phrase"],
-                    height=80,
-                    on_change=save_card_field,
-                    args=(idx, "fr_phrase", widget_keys["fr_phrase"]),
-                )
+                with col_fr:
+                    st.text_input(
+                        "French Word",
+                        value=card.get("fr_word", ""),
+                        key=widget_keys["fr_word"],
+                        on_change=save_card_field,
+                        args=(idx, "fr_word", widget_keys["fr_word"]),
+                    )
+                    st.text_area(
+                        "French Sentence",
+                        value=card.get("fr_phrase", ""),
+                        key=widget_keys["fr_phrase"],
+                        height=60,
+                        on_change=save_card_field,
+                        args=(idx, "fr_phrase", widget_keys["fr_phrase"]),
+                    )
 
-            with col_en:
-                st.text_input(
-                    "English Word",
-                    value=card.get("en_word", ""),
-                    key=widget_keys["en_word"],
-                    on_change=save_card_field,
-                    args=(idx, "en_word", widget_keys["en_word"]),
-                )
-                st.text_area(
-                    "English Sentence",
-                    value=card.get("en_phrase", ""),
-                    key=widget_keys["en_phrase"],
-                    height=80,
-                    on_change=save_card_field,
-                    args=(idx, "en_phrase", widget_keys["en_phrase"]),
-                )
+                with col_en:
+                    st.text_input(
+                        "English Word",
+                        value=card.get("en_word", ""),
+                        key=widget_keys["en_word"],
+                        on_change=save_card_field,
+                        args=(idx, "en_word", widget_keys["en_word"]),
+                    )
+                    st.text_area(
+                        "English Sentence",
+                        value=card.get("en_phrase", ""),
+                        key=widget_keys["en_phrase"],
+                        height=60,
+                        on_change=save_card_field,
+                        args=(idx, "en_phrase", widget_keys["en_phrase"]),
+                    )
 
-            with col_opt:
-                st.text_input(
-                    "Notes",
-                    value=card.get("extra_notes", ""),
-                    key=widget_keys["extra_notes"],
-                    on_change=save_card_field,
-                    args=(idx, "extra_notes", widget_keys["extra_notes"]),
-                )
-                st.write("")
-                st.write("")
-                regenerate_clicked = st.button(
-                    "🔄 Regenerate",
-                    key=f"{widget_prefix}_regenerate",
-                    use_container_width=True,
-                )
+                with col_opt:
+                    st.text_input(
+                        "Notes",
+                        value=card.get("extra_notes", ""),
+                        key=widget_keys["extra_notes"],
+                        on_change=save_card_field,
+                        args=(idx, "extra_notes", widget_keys["extra_notes"]),
+                    )
+                    regenerate_clicked = st.button(
+                        "🔄 Regenerate",
+                        key=f"{widget_prefix}_regenerate",
+                        use_container_width=True,
+                    )
 
-            if regenerate_clicked:
-                previous_card = dict(st.session_state.card_regeneration_baselines[idx])
-                submitted_card = card_from_widgets(idx, widget_keys)
-                if not api_key:
-                    st.error("Please provide a Gemini API Key.")
-                else:
-                    with st.spinner(f"Regenerating Card {idx + 1}..."):
-                        try:
-                            updated_card = regenerate_single_card(
-                                api_key,
-                                model_choice,
-                                st.session_state.selected_lesson,
-                                lessons[st.session_state.selected_lesson],
-                                previous_card=previous_card,
-                                current_card=submitted_card,
-                            )
-                            st.session_state.cards_data[idx] = updated_card
-                            st.session_state.card_regeneration_baselines[idx] = dict(
-                                updated_card
-                            )
-                            st.session_state.card_form_versions[idx] = form_version + 1
-                            st.toast(f"Card {idx + 1} updated!", icon="🎉")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Failed to regenerate card: {str(e)}")
+                if regenerate_clicked:
+                    previous_card = dict(st.session_state.card_regeneration_baselines[idx])
+                    submitted_card = card_from_widgets(idx, widget_keys)
+                    if not api_key:
+                        st.error("Please provide a Gemini API Key.")
+                    else:
+                        with st.spinner(f"Regenerating Card {idx + 1}..."):
+                            try:
+                                updated_card = regenerate_single_card(
+                                    api_key,
+                                    model_choice,
+                                    st.session_state.selected_lesson,
+                                    lessons[st.session_state.selected_lesson],
+                                    previous_card=previous_card,
+                                    current_card=submitted_card,
+                                )
+                                st.session_state.cards_data[idx] = updated_card
+                                st.session_state.card_regeneration_baselines[idx] = dict(
+                                    updated_card
+                                )
+                                st.session_state.card_form_versions[idx] = form_version + 1
+                                st.toast(f"Card {idx + 1} updated!", icon="🎉")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Failed to regenerate card: {str(e)}")
 
     # --- STEP 3: APPROVE & DOWNLOAD ---
     st.divider()
