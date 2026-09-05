@@ -59,6 +59,17 @@ class DraftStateTests(unittest.TestCase):
 
         self.assertEqual(restored["shared_tag"], "")
 
+    def test_legacy_free_practice_tag_is_migrated_to_no_tag(self):
+        raw = self.build(
+            no_assimil_mode=True,
+            selected_lesson="French Practice",
+            shared_tag="french_practice",
+        )
+
+        restored = restore_draft_json(raw, "en", {})
+
+        self.assertEqual(restored["shared_tag"], "")
+
     def test_invalid_or_tampered_values_are_rejected(self):
         self.assertIsNone(restore_draft_json("not json", "en", {}))
 

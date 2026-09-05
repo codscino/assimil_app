@@ -103,6 +103,9 @@ def restore_draft_json(raw_value, target_language_code, valid_lessons):
         shared_tag = (
             "" if no_assimil_mode else "assimil_lesson_01"
         )
+    elif no_assimil_mode and shared_tag == "french_practice":
+        # Migrate the old automatic free-practice tag to the new tagless default.
+        shared_tag = ""
 
     return {
         "cards_data": cards,

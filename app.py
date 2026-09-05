@@ -1083,7 +1083,9 @@ with c1:
             help="Drag the selector or use the arrow keys to move quickly between lessons.",
         )
         selected_lesson = lesson_numbers[selected_lesson_number]
-        if selected_lesson != st.session_state.selected_lesson:
+        # A disabled picker retains its last value. Do not let that stale lesson
+        # overwrite the intentionally blank free-practice tag.
+        if not no_assimil_mode and selected_lesson != st.session_state.selected_lesson:
             st.session_state.selected_lesson = selected_lesson
             new_lesson_tag = get_lesson_tag(selected_lesson)
             st.session_state.shared_tag = new_lesson_tag
