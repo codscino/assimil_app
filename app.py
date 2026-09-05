@@ -228,7 +228,7 @@ def generate_flashcards_with_gemini(api_key, model_name, lesson_name, lesson_dat
     {json.dumps(parsed_items, ensure_ascii=False, indent=2)}
 
     Instructions for each card:
-    1. Clean the French target into a short, natural form for `fr_word`.
+    1. Preserve the French target as written for `fr_word`; only correct clear spelling mistakes.
     2. Write a natural French sentence for `fr_phrase` that matches the conversational Assimil style.
        - The cleaned `fr_word` must appear inside `fr_phrase` (case-insensitive).
     3. Write the English translation for `en_word` and `en_phrase`.
