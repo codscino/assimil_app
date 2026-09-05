@@ -10,11 +10,22 @@ permissions:
   contents: read
 
 jobs:
-  ping:
+  keep-awake:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 8
     steps:
-      - name: Check Streamlit health
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Playwright
+        run: npm install --no-save --no-package-lock playwright@1.52.0
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Visit Streamlit app and wake it if needed
         env:
           STREAMLIT_APP_URL: ${{ secrets.STREAMLIT_APP_URL }}
         run: |
@@ -25,8 +36,4 @@ jobs:
             exit 1
           fi
 
-          health_url="${STREAMLIT_APP_URL%/}/_stcore/health"
-          curl --fail --silent --show-error --location \
-            --retry 3 --retry-delay 5 --max-time 30 \
-            "$health_url"
-          echo "Streamlit app is healthy."
+          node .github/scripts/keep_streamlit_awake.mjs
