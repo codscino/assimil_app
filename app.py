@@ -6,11 +6,13 @@ from pydantic import BaseModel, Field
 import json
 import re
 import io
+import base64
 import hashlib
 import tempfile
 from pathlib import Path
 
 import requests
+import streamlit.components.v1 as components
 
 from flashcard_regeneration import build_regeneration_prompt
 
@@ -569,6 +571,24 @@ def save_all_card_widgets(all_widget_keys):
 def clear_voice_preview():
     st.session_state.pop("elevenlabs_preview_audio", None)
 
+
+def trigger_apkg_download(package_bytes, filename):
+    """Start the browser download after the package has finished generating."""
+    encoded_package = base64.b64encode(package_bytes).decode("ascii")
+    components.html(
+        f"""
+        <script>
+        const download = document.createElement("a");
+        download.href = "data:application/octet-stream;base64,{encoded_package}";
+        download.download = {json.dumps(filename)};
+        document.body.appendChild(download);
+        download.click();
+        download.remove();
+        </script>
+        """,
+        height=0,
+    )
+
 # --- STEP 1: INPUT FORM ---
 st.subheader("1. Input Words & Select Lesson")
 c1, c2 = st.columns([1, 2])
@@ -842,29 +862,24 @@ if st.session_state.cards_data:
                     st.audio(preview_audio, format="audio/mpeg")
 
             if st.button(
-                "📦 Approve All & Generate .apkg Package",
+                "📦 Approve All & Download .apkg Package",
                 type="primary",
                 use_container_width=True,
             ):
                 try:
-                    with st.spinner("Generating ElevenLabs French audio and packaging deck..."):
-                        st.session_state.apkg_buffer = build_anki_apkg(
+                    with st.spinner("Generating French pronunciations and packaging deck..."):
+                        apkg_bytes = build_anki_apkg(
                             st.session_state.cards_data,
                             st.session_state.selected_lesson,
                             elevenlabs_api_key,
                             selected_voice_id,
                             shared_tag=st.session_state.shared_tag,
                         ).getvalue()
-                    st.success("Package is ready to download.")
+                    lesson_num = re.sub(r'\D', '', st.session_state.selected_lesson) or "01"
+                    trigger_apkg_download(
+                        apkg_bytes,
+                        f"Assimil_Lesson_{lesson_num.zfill(2)}.apkg",
+                    )
+                    st.success("Your package is downloading.")
                 except requests.RequestException as error:
-                    st.error(f"Could not generate ElevenLabs audio: {error}")
-
-            if apkg_bytes := st.session_state.get("apkg_buffer"):
-                lesson_num = re.sub(r'\D', '', st.session_state.selected_lesson) or "01"
-                st.download_button(
-                    label="📥 Download .apkg Package",
-                    data=apkg_bytes,
-                    file_name=f"Assimil_Lesson_{lesson_num.zfill(2)}.apkg",
-                    mime="application/octet-stream",
-                    use_container_width=True,
-                )
+                    st.error(f"Could not generate French pronunciations: {error}")
