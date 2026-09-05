@@ -43,10 +43,11 @@ try {
     console.log("The app is not showing the sleep screen.");
   }
 
-  // A real Streamlit page has this container after it wakes and connects.
-  await page.locator('[data-testid="stAppViewContainer"]').waitFor({
+  // Cold starts can take several minutes while Streamlit rebuilds the app.
+  // Wait for text from this app rather than only the generic Streamlit shell.
+  await page.getByText(/Assimil French Anki Generator/).first().waitFor({
     state: "visible",
-    timeout: 90_000,
+    timeout: 240_000,
   });
 
   const bodyText = await page.locator("body").innerText();
@@ -55,6 +56,16 @@ try {
   }
 
   console.log("Streamlit app loaded successfully.");
+} catch (error) {
+  console.error(`Final browser URL: ${page.url()}`);
+  try {
+    console.error("Page text:");
+    console.error((await page.locator("body").innerText()).slice(0, 4000));
+    await page.screenshot({ path: "streamlit-debug.png", fullPage: true });
+  } catch (diagnosticError) {
+    console.error(`Could not collect browser diagnostics: ${diagnosticError}`);
+  }
+  throw error;
 } finally {
   await browser.close();
 }

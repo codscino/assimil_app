@@ -12,7 +12,7 @@ permissions:
 jobs:
   keep-awake:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -40,3 +40,11 @@ jobs:
           fi
 
           node .github/scripts/keep_streamlit_awake.mjs
+
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: streamlit-browser-diagnostics
+          path: streamlit-debug.*
+          if-no-files-found: ignore
