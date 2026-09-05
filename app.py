@@ -57,23 +57,7 @@ FRONT_FR2EN = r"""
 {{/fr_phrase}}
 
 <br><br>
-{{type:en_word}}
-
-<script>
-// Retain the response across Anki's front-to-back render so the answer side
-// can apply our more forgiving comparison.
-(() => {
-  const input = document.getElementById("typeans");
-  if (!input) return;
-  const key = "assimil-typed-answer";
-  const remember = () => {
-    try { sessionStorage.setItem(key, input.value); } catch (_) {}
-  };
-  remember();
-  input.addEventListener("input", remember);
-  input.addEventListener("change", remember);
-})();
-</script>
+{{type:nc:en_word}}
 
 <script>
 const phrase = document.querySelector(".phrase");
@@ -113,7 +97,7 @@ BACK_FR2EN = r"""
 {{/fr_phrase}}
 
 <hr id="answer">
-{{type:en_word}}
+{{type:nc:en_word}}
 <span class="expected-answer">{{text:en_word}}</span>
 
 <script>
@@ -121,10 +105,21 @@ BACK_FR2EN = r"""
 (() => {
   const answer = document.getElementById("typeans");
   const expected = document.querySelector(".expected-answer")?.textContent ?? "";
-  const key = "assimil-typed-answer";
-  let entered;
-  try { entered = sessionStorage.getItem(key); sessionStorage.removeItem(key); } catch (_) {}
-  if (!answer || entered === null || !expected) return;
+  if (!answer || !expected) return;
+
+  // Anki puts the typed response before the first <br> in its comparison.
+  // Reading it here is reliable across desktop and mobile webviews and avoids
+  // depending on storage surviving the front-to-back card render.
+  let entered = "";
+  const hasDiff = Boolean(answer.querySelector("#typearrow"));
+  if (hasDiff) {
+    for (const node of answer.childNodes) {
+      if (node.nodeName === "BR") break;
+      entered += node.textContent ?? "";
+    }
+  } else if (answer.querySelector(".typeGood")) {
+    entered = answer.textContent ?? "";
+  }
 
   const normalize = (value) => String(value).normalize("NFKD")
     .replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/gu, "");
@@ -217,23 +212,7 @@ FRONT_EN2FR = r"""
 {{/extra_notes}}
 
 <br><br>
-{{type:fr_word}}
-
-<script>
-// Retain the response across Anki's front-to-back render so the answer side
-// can apply our more forgiving comparison.
-(() => {
-  const input = document.getElementById("typeans");
-  if (!input) return;
-  const key = "assimil-typed-answer";
-  const remember = () => {
-    try { sessionStorage.setItem(key, input.value); } catch (_) {}
-  };
-  remember();
-  input.addEventListener("input", remember);
-  input.addEventListener("change", remember);
-})();
-</script>
+{{type:nc:fr_word}}
 
 <script>
 const phrase = document.querySelector(".phrase");
@@ -295,7 +274,7 @@ BACK_EN2FR = r"""
 {{/extra_notes}}
 
 <hr id="answer">
-{{type:fr_word}}
+{{type:nc:fr_word}}
 <span class="expected-answer">{{text:fr_word}}</span>
 
 <script>
@@ -303,10 +282,21 @@ BACK_EN2FR = r"""
 (() => {
   const answer = document.getElementById("typeans");
   const expected = document.querySelector(".expected-answer")?.textContent ?? "";
-  const key = "assimil-typed-answer";
-  let entered;
-  try { entered = sessionStorage.getItem(key); sessionStorage.removeItem(key); } catch (_) {}
-  if (!answer || entered === null || !expected) return;
+  if (!answer || !expected) return;
+
+  // Anki puts the typed response before the first <br> in its comparison.
+  // Reading it here is reliable across desktop and mobile webviews and avoids
+  // depending on storage surviving the front-to-back card render.
+  let entered = "";
+  const hasDiff = Boolean(answer.querySelector("#typearrow"));
+  if (hasDiff) {
+    for (const node of answer.childNodes) {
+      if (node.nodeName === "BR") break;
+      entered += node.textContent ?? "";
+    }
+  } else if (answer.querySelector(".typeGood")) {
+    entered = answer.textContent ?? "";
+  }
 
   const normalize = (value) => String(value).normalize("NFKD")
     .replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/gu, "");

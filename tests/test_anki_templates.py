@@ -20,6 +20,14 @@ def template_constants():
 
 
 class TypedAnswerTemplateTests(unittest.TestCase):
+    def test_all_cards_use_ankis_native_ignore_diacritics_filter(self):
+        templates = template_constants()
+
+        self.assertIn("{{type:nc:en_word}}", templates["FRONT_FR2EN"])
+        self.assertIn("{{type:nc:en_word}}", templates["BACK_FR2EN"])
+        self.assertIn("{{type:nc:fr_word}}", templates["FRONT_EN2FR"])
+        self.assertIn("{{type:nc:fr_word}}", templates["BACK_EN2FR"])
+
     def test_forward_card_compares_against_target_language(self):
         template = template_constants()["BACK_FR2EN"]
 
@@ -27,6 +35,8 @@ class TypedAnswerTemplateTests(unittest.TestCase):
             '<span class="expected-answer">{{text:en_word}}</span>', template
         )
         self.assertIn('document.querySelector(".expected-answer")', template)
+        self.assertIn('answer.querySelector("#typearrow")', template)
+        self.assertNotIn("sessionStorage", template)
 
     def test_reverse_card_compares_against_french(self):
         template = template_constants()["BACK_EN2FR"]
@@ -35,6 +45,15 @@ class TypedAnswerTemplateTests(unittest.TestCase):
             '<span class="expected-answer">{{text:fr_word}}</span>', template
         )
         self.assertIn('document.querySelector(".expected-answer")', template)
+        self.assertIn('answer.querySelector("#typearrow")', template)
+        self.assertNotIn("sessionStorage", template)
+
+    def test_custom_comparison_ignores_case_spaces_and_diacritics(self):
+        template = template_constants()["BACK_EN2FR"]
+
+        self.assertIn('.replace(/\\p{M}/gu, "")', template)
+        self.assertIn(".toLowerCase()", template)
+        self.assertIn('.replace(/\\s+/gu, "")', template)
 
 
 if __name__ == "__main__":
