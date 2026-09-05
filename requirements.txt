@@ -2,3 +2,4 @@ streamlit
 genanki
 google-genai
 pydantic
+requests

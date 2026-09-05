@@ -6,13 +6,19 @@ from pydantic import BaseModel, Field
 import json
 import re
 import io
+import hashlib
+import tempfile
+from pathlib import Path
+
+import requests
 
 from flashcard_regeneration import build_regeneration_prompt
 
 # -----------------------------------------------------------------------------
 # 1. ANKI MODEL DEFINITION (Raw Strings)
 # -----------------------------------------------------------------------------
-MODEL_ID = 1607392319
+# Changed because the model now has an embedded ElevenLabs audio field.
+MODEL_ID = 1607392320
 FR2EN_DECK_ID = 2059500001
 EN2FR_DECK_ID = 2059500002
 
@@ -20,12 +26,12 @@ FRONT_FR2EN = r"""
 {{#fr_phrase}}
 <div class="phrase">{{fr_phrase}}</div>
 <span class="target-word">{{text:fr_word}}</span>
-{{tts fr_FR:fr_phrase}}
+{{fr_audio}}
 {{/fr_phrase}}
 
 {{^fr_phrase}}
 <div>{{fr_word}}</div>
-{{tts fr_FR:fr_word}}
+{{fr_audio}}
 {{/fr_phrase}}
 
 <br><br>
@@ -144,10 +150,10 @@ BACK_EN2FR = r"""
 </div>
 
 {{#fr_phrase}}
-{{tts fr_FR:fr_phrase}}
+{{fr_audio}}
 {{/fr_phrase}}
 {{^fr_phrase}}
-{{tts fr_FR:fr_word}}
+{{fr_audio}}
 {{/fr_phrase}}
 
 <script>
@@ -204,6 +210,7 @@ anki_model = genanki.Model(
         {'name': 'en_word'},
         {'name': 'en_phrase'},
         {'name': 'extra_notes'},
+        {'name': 'fr_audio'},
     ],
     templates=[
         {
@@ -393,7 +400,45 @@ class DirectionalDeck(genanki.Deck):
         )
 
 
-def build_anki_apkg(cards_data, lesson_name, shared_tag=None):
+@st.cache_data(ttl=3600, show_spinner=False)
+def list_elevenlabs_voices(elevenlabs_api_key):
+    """Return the voices available to the account, cached for one hour."""
+    response = requests.get(
+        "https://api.elevenlabs.io/v1/voices",
+        headers={"xi-api-key": elevenlabs_api_key},
+        timeout=20,
+    )
+    response.raise_for_status()
+    return response.json().get("voices", [])
+
+
+def synthesize_french_audio(elevenlabs_api_key, voice_id, text):
+    """Generate an Anki-friendly MP3 using a multilingual French request."""
+    response = requests.post(
+        f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+        params={"output_format": "mp3_44100_128"},
+        headers={
+            "xi-api-key": elevenlabs_api_key,
+            "Content-Type": "application/json",
+        },
+        json={
+            "text": text,
+            "model_id": "eleven_multilingual_v2",
+            "language_code": "fr",
+        },
+        timeout=60,
+    )
+    response.raise_for_status()
+    return response.content
+
+
+def build_anki_apkg(
+    cards_data,
+    lesson_name,
+    elevenlabs_api_key,
+    elevenlabs_voice_id,
+    shared_tag=None,
+):
     lesson_num = re.sub(r'\D', '', lesson_name) or "01"
     lesson_num_padded = lesson_num.zfill(2)
 
@@ -406,24 +451,49 @@ def build_anki_apkg(cards_data, lesson_name, shared_tag=None):
     deck = DirectionalDeck(FR2EN_DECK_ID, "FR2EN", EN2FR_DECK_ID)
     reverse_deck = genanki.Deck(EN2FR_DECK_ID, "EN2FR")
     
-    for item in cards_data:
-        note = genanki.Note(
-            model=anki_model,
-            fields=[
-                item.get("fr_word", ""),
-                item.get("fr_phrase", ""),
-                item.get("en_word", ""),
-                item.get("en_phrase", ""),
-                item.get("extra_notes", "")
-            ],
-            tags=[tag_name]
-        )
-        deck.add_note(note)
-    
-    buffer = io.BytesIO()
-    genanki.Package([deck, reverse_deck]).write_to_file(buffer)
-    buffer.seek(0)
-    return buffer
+    with tempfile.TemporaryDirectory() as temp_dir:
+        media_files = []
+        generated_audio = {}
+
+        for item in cards_data:
+            french_text = (item.get("fr_phrase") or item.get("fr_word") or "").strip()
+            audio_field = ""
+            if french_text:
+                # Reuse audio when the exact same phrase occurs on multiple cards.
+                filename = (
+                    f"fr_{hashlib.sha256(french_text.encode('utf-8')).hexdigest()[:16]}.mp3"
+                )
+                audio_path = Path(temp_dir) / filename
+                if filename not in generated_audio:
+                    audio_path.write_bytes(
+                        synthesize_french_audio(
+                            elevenlabs_api_key, elevenlabs_voice_id, french_text
+                        )
+                    )
+                    generated_audio[filename] = audio_path
+                    media_files.append(str(audio_path))
+                audio_field = f"[sound:{filename}]"
+
+            note = genanki.Note(
+                model=anki_model,
+                fields=[
+                    item.get("fr_word", ""),
+                    item.get("fr_phrase", ""),
+                    item.get("en_word", ""),
+                    item.get("en_phrase", ""),
+                    item.get("extra_notes", ""),
+                    audio_field,
+                ],
+                tags=[tag_name],
+            )
+            deck.add_note(note)
+
+        buffer = io.BytesIO()
+        package = genanki.Package([deck, reverse_deck])
+        package.media_files = media_files
+        package.write_to_file(buffer)
+        buffer.seek(0)
+        return buffer
 
 # -----------------------------------------------------------------------------
 # 3. STREAMLIT APP UI & SESSION STATE
@@ -492,6 +562,10 @@ def save_all_card_widgets(all_widget_keys):
     """Final synchronization used immediately before exporting the deck."""
     for card_index, widget_keys in all_widget_keys.items():
         card_from_widgets(card_index, widget_keys)
+
+
+def clear_voice_preview():
+    st.session_state.pop("elevenlabs_preview_audio", None)
 
 # --- STEP 1: INPUT FORM ---
 st.subheader("1. Input Words & Select Lesson")
@@ -708,20 +782,87 @@ if st.session_state.cards_data:
     st.subheader("3. Export Deck")
 
     save_all_card_widgets(all_widget_keys)
-    apkg_buffer = build_anki_apkg(
-        st.session_state.cards_data,
-        st.session_state.selected_lesson,
-        shared_tag=st.session_state.shared_tag,
-    )
-    lesson_num = re.sub(r'\D', '', st.session_state.selected_lesson) or "01"
-    
-    st.download_button(
-        label="📥 Approve All & Download .apkg Package",
-        data=apkg_buffer,
-        file_name=f"Assimil_Lesson_{lesson_num.zfill(2)}.apkg",
-        mime="application/octet-stream",
-        type="primary",
-        use_container_width=True,
-        on_click=save_all_card_widgets,
-        args=(all_widget_keys,),
-    )
+    elevenlabs_api_key = st.secrets.get("ELEVENLABS_API_KEY", "")
+
+    if not elevenlabs_api_key:
+        st.error(
+            "Add ELEVENLABS_API_KEY to .streamlit/secrets.toml before exporting "
+            "a deck with French audio."
+        )
+    else:
+        try:
+            elevenlabs_voices = list_elevenlabs_voices(elevenlabs_api_key)
+        except requests.RequestException as error:
+            elevenlabs_voices = []
+            st.error(f"Could not load ElevenLabs voices: {error}")
+
+        if not elevenlabs_voices:
+            st.warning("No ElevenLabs voices are available for this API key.")
+        else:
+            voice_ids = [voice["voice_id"] for voice in elevenlabs_voices]
+            configured_voice_id = st.secrets.get("ELEVENLABS_VOICE_ID", "")
+            default_voice_index = (
+                voice_ids.index(configured_voice_id)
+                if configured_voice_id in voice_ids
+                else 0
+            )
+            voice_by_id = {voice["voice_id"]: voice for voice in elevenlabs_voices}
+
+            export_col, voice_col = st.columns([2, 1])
+            with voice_col:
+                selected_voice_id = st.selectbox(
+                    "French ElevenLabs voice",
+                    options=voice_ids,
+                    index=default_voice_index,
+                    format_func=lambda voice_id: (
+                        f"{voice_by_id[voice_id].get('name', 'Unnamed voice')} "
+                        f"({voice_by_id[voice_id].get('category', 'voice')})"
+                    ),
+                    help=(
+                        "Choose a voice trained for French or with a French accent "
+                        "for the most natural pronunciation."
+                    ),
+                    key="elevenlabs_voice_id",
+                    on_change=clear_voice_preview,
+                )
+                if st.button("▶ Preview selected voice", use_container_width=True):
+                    try:
+                        st.session_state.elevenlabs_preview_audio = synthesize_french_audio(
+                            elevenlabs_api_key,
+                            selected_voice_id,
+                            "Bonjour ! Voici un exemple de prononciation française.",
+                        )
+                    except requests.RequestException as error:
+                        st.error(f"Could not generate voice preview: {error}")
+
+                if preview_audio := st.session_state.get("elevenlabs_preview_audio"):
+                    st.audio(preview_audio, format="audio/mpeg")
+
+            with export_col:
+                if st.button(
+                    "📦 Approve All & Generate .apkg Package",
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    try:
+                        with st.spinner("Generating ElevenLabs French audio and packaging deck..."):
+                            st.session_state.apkg_buffer = build_anki_apkg(
+                                st.session_state.cards_data,
+                                st.session_state.selected_lesson,
+                                elevenlabs_api_key,
+                                selected_voice_id,
+                                shared_tag=st.session_state.shared_tag,
+                            ).getvalue()
+                        st.success("Package is ready to download.")
+                    except requests.RequestException as error:
+                        st.error(f"Could not generate ElevenLabs audio: {error}")
+
+                if apkg_bytes := st.session_state.get("apkg_buffer"):
+                    lesson_num = re.sub(r'\D', '', st.session_state.selected_lesson) or "01"
+                    st.download_button(
+                        label="📥 Download .apkg Package",
+                        data=apkg_bytes,
+                        file_name=f"Assimil_Lesson_{lesson_num.zfill(2)}.apkg",
+                        mime="application/octet-stream",
+                        use_container_width=True,
+                    )
