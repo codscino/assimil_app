@@ -70,10 +70,8 @@ BACK_FR2EN = r"""
 </div>
 
 {{#en_phrase}}
-{{tts en_US:en_phrase}}
 {{/en_phrase}}
 {{^en_phrase}}
-{{tts en_US:en_word}}
 {{/en_phrase}}
 
 {{#extra_notes}}
@@ -98,12 +96,10 @@ FRONT_EN2FR = r"""
 {{#en_phrase}}
 <div class="phrase">{{en_phrase}}</div>
 <span class="target-word">{{text:en_word}}</span>
-{{tts en_US:en_phrase}}
 {{/en_phrase}}
 
 {{^en_phrase}}
 <div>{{en_word}}</div>
-{{tts en_US:en_word}}
 {{/en_phrase}}
 
 {{#extra_notes}}
