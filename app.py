@@ -823,43 +823,41 @@ st.subheader("1. Input Words & Select Lesson")
 c1, c2 = st.columns([1, 2])
 
 with c1:
-    lesson_picker_col, mode_col = st.columns([3, 2])
-    with mode_col:
-        no_assimil_mode = st.toggle(
-            "No Assimil",
-            key="no_assimil_mode",
-            help="Create free-practice phrases without using lessons.json as a reference.",
+    no_assimil_mode = st.toggle(
+        "No Assimil",
+        key="no_assimil_mode",
+        help="Create free-practice phrases without using lessons.json as a reference.",
+    )
+    if no_assimil_mode != st.session_state.last_no_assimil_mode:
+        new_tag = (
+            "french_practice"
+            if no_assimil_mode
+            else get_lesson_tag(st.session_state.selected_lesson)
         )
-        if no_assimil_mode != st.session_state.last_no_assimil_mode:
-            new_tag = (
-                "french_practice"
-                if no_assimil_mode
-                else get_lesson_tag(st.session_state.selected_lesson)
-            )
-            st.session_state.shared_tag = new_tag
-            st.session_state.shared_tag_editor = new_tag
-            st.session_state.last_no_assimil_mode = no_assimil_mode
-    with lesson_picker_col:
-        if lesson_numbers:
-            selected_lesson_number = st.select_slider(
-                "Select Assimil Lesson",
-                options=list(lesson_numbers),
-                key="lesson_number_picker",
-                disabled=no_assimil_mode,
-                help="Drag the selector or use the arrow keys to move quickly between lessons.",
-            )
-            selected_lesson = lesson_numbers[selected_lesson_number]
-            if selected_lesson != st.session_state.selected_lesson:
-                st.session_state.selected_lesson = selected_lesson
-                new_lesson_tag = get_lesson_tag(selected_lesson)
-                st.session_state.shared_tag = new_lesson_tag
-                # The text input has its own keyed widget state. Keep it in sync here;
-                # otherwise its value from the previous lesson overwrites shared_tag
-                # when the editor is rendered later in this run.
-                st.session_state.shared_tag_editor = new_lesson_tag
-        elif not no_assimil_mode:
-            st.error("No numbered lessons were found in lessons.json.")
-            st.stop()
+        st.session_state.shared_tag = new_tag
+        st.session_state.shared_tag_editor = new_tag
+        st.session_state.last_no_assimil_mode = no_assimil_mode
+
+    if lesson_numbers:
+        selected_lesson_number = st.select_slider(
+            "Select Assimil Lesson",
+            options=list(lesson_numbers),
+            key="lesson_number_picker",
+            disabled=no_assimil_mode,
+            help="Drag the selector or use the arrow keys to move quickly between lessons.",
+        )
+        selected_lesson = lesson_numbers[selected_lesson_number]
+        if selected_lesson != st.session_state.selected_lesson:
+            st.session_state.selected_lesson = selected_lesson
+            new_lesson_tag = get_lesson_tag(selected_lesson)
+            st.session_state.shared_tag = new_lesson_tag
+            # The text input has its own keyed widget state. Keep it in sync here;
+            # otherwise its value from the previous lesson overwrites shared_tag
+            # when the editor is rendered later in this run.
+            st.session_state.shared_tag_editor = new_lesson_tag
+    elif not no_assimil_mode:
+        st.error("No numbered lessons were found in lessons.json.")
+        st.stop()
 
     if no_assimil_mode:
         selected_lesson = "French Practice"
