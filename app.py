@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 import json
 import re
 import io
+import os
 from streamlit.components.v1 import declare_component
 
 from flashcard_regeneration import build_regeneration_prompt
@@ -208,7 +209,7 @@ def get_lesson_number(lesson_name):
 
 paste_input = declare_component(
     "paste_input",
-    path="paste_input_component",
+    path=os.path.join(os.path.dirname(__file__), "paste_input_component"),
 )
 
 
