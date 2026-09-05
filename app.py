@@ -6,8 +6,10 @@ from pydantic import BaseModel, Field
 import json
 import re
 import io
+import html
 import hashlib
 import tempfile
+import unicodedata
 from pathlib import Path
 
 import requests
@@ -41,7 +43,7 @@ FRONT_FR2EN = r"""
 const phrase = document.querySelector(".phrase");
 const word = document.querySelector(".target-word")?.textContent.trim();
 
-if (phrase && word) {
+if (phrase && word && !phrase.querySelector(".highlight")) {
   const variants = {
     a: "[aàáâäãå]", c: "[cç]", e: "[eèéêë]", i: "[iìíîï]",
     n: "[nñ]", o: "[oòóôöõø]", u: "[uùúûü]", y: "[yÿ]"
@@ -95,7 +97,7 @@ BACK_FR2EN = r"""
 const phrase = document.querySelector(".phrase");
 const word = document.querySelector(".target-word")?.textContent.trim();
 
-if (phrase && word) {
+if (phrase && word && !phrase.querySelector(".highlight")) {
   const normalizeForMatch = (input) => {
     let normalized = "";
     const positions = [];
@@ -157,7 +159,7 @@ FRONT_EN2FR = r"""
 const phrase = document.querySelector(".phrase");
 const word = document.querySelector(".target-word")?.textContent.trim();
 
-if (phrase && word) {
+if (phrase && word && !phrase.querySelector(".highlight")) {
   const normalizeForMatch = (input) => {
     let normalized = "";
     const positions = [];
@@ -231,7 +233,7 @@ BACK_EN2FR = r"""
 const phrase = document.querySelector(".phrase");
 const word = document.querySelector(".target-word")?.textContent.trim();
 
-if (phrase && word) {
+if (phrase && word && !phrase.querySelector(".highlight")) {
   const normalizeForMatch = (input) => {
     let normalized = "";
     const positions = [];
@@ -360,6 +362,79 @@ def get_lesson_number(lesson_name):
     """Return the numeric part of a lesson key, e.g. ``Lesson 12`` -> 12."""
     match = re.search(r'\d+', lesson_name)
     return int(match.group()) if match else None
+
+
+def normalize_with_positions(text):
+    """Fold text for matching while retaining offsets into the original text."""
+    normalized = []
+    positions = []
+    punctuation = str.maketrans({
+        "’": "'", "‘": "'", "‛": "'", "`": "'",
+        "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-",
+    })
+
+    for index, character in enumerate(text):
+        if character.isspace():
+            if normalized and normalized[-1] != " ":
+                normalized.append(" ")
+                positions.append([index, index + 1])
+            elif normalized and normalized[-1] == " ":
+                positions[-1][1] = index + 1
+            continue
+
+        replacement = {"œ": "oe", "Œ": "OE", "æ": "ae", "Æ": "AE"}.get(
+            character, character
+        )
+        folded = unicodedata.normalize("NFKD", replacement).translate(punctuation)
+        base_characters = [
+            folded_character.lower()
+            for folded_character in folded
+            if not unicodedata.combining(folded_character)
+        ]
+        if not base_characters and positions:
+            # Include a decomposed accent in the preceding highlighted character.
+            positions[-1][1] = index + 1
+        for folded_character in base_characters:
+            normalized.append(folded_character)
+            positions.append([index, index + 1])
+
+    if normalized and normalized[-1] == " ":
+        normalized.pop()
+        positions.pop()
+    return "".join(normalized), positions
+
+
+def highlight_target(phrase, target):
+    """Return safe HTML with accent/case/spacing-insensitive target highlights."""
+    if not phrase or not target:
+        return html.escape(phrase or "")
+
+    normalized_phrase, positions = normalize_with_positions(phrase)
+    normalized_target, _ = normalize_with_positions(target)
+    if not normalized_target:
+        return html.escape(phrase)
+
+    parts = []
+    original_cursor = 0
+    search_cursor = 0
+    while True:
+        match_index = normalized_phrase.find(normalized_target, search_cursor)
+        if match_index == -1:
+            break
+        match_start = positions[match_index][0]
+        match_end = positions[match_index + len(normalized_target) - 1][1]
+        if match_start >= original_cursor:
+            parts.append(html.escape(phrase[original_cursor:match_start]))
+            parts.append(
+                f'<span class="highlight">{html.escape(phrase[match_start:match_end])}</span>'
+            )
+            original_cursor = match_end
+        search_cursor = match_index + len(normalized_target)
+
+    if not parts:
+        return html.escape(phrase)
+    parts.append(html.escape(phrase[original_cursor:]))
+    return "".join(parts)
 
 def parse_input_line(line):
     match = re.match(r'^(.*?)\s*\((.*)\)\s*$', line)
@@ -560,7 +635,11 @@ def build_anki_apkg(
         generated_audio = {}
 
         for item in cards_data:
-            french_text = (item.get("fr_phrase") or item.get("fr_word") or "").strip()
+            french_word = item.get("fr_word", "")
+            french_phrase = item.get("fr_phrase", "")
+            english_word = item.get("en_word", "")
+            english_phrase = item.get("en_phrase", "")
+            french_text = (french_phrase or french_word).strip()
             audio_field = ""
             if french_text:
                 # Reuse audio when the exact same phrase occurs on multiple cards.
@@ -581,10 +660,10 @@ def build_anki_apkg(
             note = genanki.Note(
                 model=anki_model,
                 fields=[
-                    item.get("fr_word", ""),
-                    item.get("fr_phrase", ""),
-                    item.get("en_word", ""),
-                    item.get("en_phrase", ""),
+                    french_word,
+                    highlight_target(french_phrase, french_word),
+                    english_word,
+                    highlight_target(english_phrase, english_word),
                     item.get("extra_notes", ""),
                     audio_field,
                 ],
