@@ -186,8 +186,12 @@ class FlashcardItem(BaseModel):
     en_phrase: str = Field(description="English translation of fr_phrase")
     extra_notes: str = Field(description="User notes combined with brief grammar tips if useful")
 
-@st.cache_data
 def load_lessons():
+    """Read the current lesson file on every rerun.
+
+    The JSON is small, and caching this no-argument function can otherwise keep
+    serving an earlier version after lessons.json is updated on a deployment.
+    """
     with open("lessons.json", "r", encoding="utf-8") as f:
         return json.load(f)
 
