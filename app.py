@@ -196,6 +196,11 @@ def get_lesson_tag(lesson_name):
     lesson_num_padded = lesson_num.zfill(2)
     return f"assimil_lesson_{lesson_num_padded}"
 
+def get_lesson_number(lesson_name):
+    """Return the numeric part of a lesson key, e.g. ``Lesson 12`` -> 12."""
+    match = re.search(r'\d+', lesson_name)
+    return int(match.group()) if match else None
+
 def parse_user_input(raw_text):
     items = []
     for line in raw_text.strip().split('\n'):
@@ -341,11 +346,22 @@ if not api_key:
     api_key = st.text_input("Enter Gemini API Key", type="password")
 
 lessons = load_lessons()
+lesson_numbers = {
+    number: lesson_name
+    for lesson_name in lessons
+    if (number := get_lesson_number(lesson_name)) is not None
+}
+if not lesson_numbers:
+    st.error("No numbered lessons were found in lessons.json.")
+    st.stop()
+lesson_numbers = dict(sorted(lesson_numbers.items()))
 
 if "cards_data" not in st.session_state:
     st.session_state.cards_data = None
-if "selected_lesson" not in st.session_state:
-    st.session_state.selected_lesson = list(lessons.keys())[0]
+if "selected_lesson" not in st.session_state or st.session_state.selected_lesson not in lessons:
+    st.session_state.selected_lesson = next(iter(lesson_numbers.values()))
+if "lesson_number_picker" not in st.session_state:
+    st.session_state.lesson_number_picker = get_lesson_number(st.session_state.selected_lesson)
 if "shared_tag" not in st.session_state:
     st.session_state.shared_tag = get_lesson_tag(st.session_state.selected_lesson)
 if "card_form_epoch" not in st.session_state:
@@ -381,11 +397,13 @@ st.subheader("1. Input Words & Select Lesson")
 c1, c2 = st.columns([1, 2])
 
 with c1:
-    selected_lesson = st.selectbox(
-        "Select Assimil Lesson", 
-        list(lessons.keys()),
-        index=list(lessons.keys()).index(st.session_state.selected_lesson)
+    selected_lesson_number = st.select_slider(
+        "Select Assimil Lesson",
+        options=list(lesson_numbers),
+        key="lesson_number_picker",
+        help="Drag the selector or use the arrow keys to move quickly between lessons.",
     )
+    selected_lesson = lesson_numbers[selected_lesson_number]
     if selected_lesson != st.session_state.selected_lesson:
         st.session_state.selected_lesson = selected_lesson
         new_lesson_tag = get_lesson_tag(selected_lesson)
