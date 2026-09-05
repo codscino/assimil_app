@@ -447,10 +447,10 @@ with c1:
 
 with c2:
     st.markdown("""
-    **Enter target words/phrases (one per line):**
-    Add extra notes in parentheses `()`.
+    **Enter target words/phrases (one per line):**<br>
+    Add extra notes in parentheses `()`.<br>
     *Example:* `comment allez vous (formal way to ask how someone is)`
-    """)
+    """, unsafe_allow_html=True)
     user_input = st.text_area(
         "Target Words",
         height=120,
