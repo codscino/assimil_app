@@ -50,7 +50,7 @@ try {
     hasText: /Assimil French Anki Generator/,
   }).first().waitFor({
     state: "visible",
-    timeout: 300_000,
+    timeout: 120_000,
   });
 
   const bodyText = await page.locator("body").innerText();

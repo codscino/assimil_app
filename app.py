@@ -7,6 +7,8 @@ import json
 import re
 import io
 
+from flashcard_regeneration import build_regeneration_prompt
+
 # -----------------------------------------------------------------------------
 # 1. ANKI MODEL DEFINITION (Raw Strings)
 # -----------------------------------------------------------------------------
@@ -253,31 +255,24 @@ def generate_flashcards_with_gemini(api_key, model_name, lesson_name, lesson_dat
             
     return parsed_cards
 
-def regenerate_single_card(api_key, model_name, lesson_name, lesson_data, card_item):
+def regenerate_single_card(
+    api_key,
+    model_name,
+    lesson_name,
+    lesson_data,
+    previous_card,
+    current_card,
+):
     client = genai.Client(api_key=api_key)
     lesson_tag_main = get_lesson_tag(lesson_name)
-    
-    prompt = f"""
-    You are an expert French tutor creating a completely new card based on an updated French word.
 
-    Lesson context:
-    - Lesson: {lesson_name}
-    - Tag: `{lesson_tag_main}`
-
-    Reference sentences from this lesson:
-    {json.dumps(lesson_data, ensure_ascii=False, indent=2)}
-
-    NEW Target French Word/Phrase: "{card_item.get('fr_word', '')}"
-    Notes to preserve: "{card_item.get('extra_notes', '')}"
-
-    CRITICAL INSTRUCTIONS:
-    1. Clean "{card_item.get('fr_word', '')}" for `fr_word`.
-    2. Completely REWRITE `en_word` to be the exact English translation of the NEW `fr_word`.
-    3. Create a BRAND NEW natural French sentence for `fr_phrase` containing `fr_word`.
-    4. Create a BRAND NEW English sentence for `en_phrase` translating the new `fr_phrase`.
-    5. DO NOT reuse any previous translations or context from old words (e.g. ignore any old sausage references).
-    6. Preserve `extra_notes` as provided above unless empty.
-    """
+    prompt = build_regeneration_prompt(
+        lesson_name,
+        lesson_tag_main,
+        lesson_data,
+        previous_card,
+        current_card,
+    )
 
     response = client.models.generate_content(
         model=model_name,
@@ -289,8 +284,9 @@ def regenerate_single_card(api_key, model_name, lesson_name, lesson_data, card_i
     )
     
     new_card = json.loads(response.text)
-    new_card["raw_word"] = card_item.get("fr_word", "")
-    new_card["user_notes"] = card_item.get("extra_notes", "")
+    new_card["extra_notes"] = current_card.get("extra_notes", "")
+    new_card["raw_word"] = current_card.get("fr_word", "")
+    new_card["user_notes"] = current_card.get("extra_notes", "")
     return new_card
 
 def build_anki_apkg(cards_data, lesson_name, shared_tag=None):
@@ -352,6 +348,10 @@ if "selected_lesson" not in st.session_state:
     st.session_state.selected_lesson = list(lessons.keys())[0]
 if "shared_tag" not in st.session_state:
     st.session_state.shared_tag = get_lesson_tag(st.session_state.selected_lesson)
+if "card_form_epoch" not in st.session_state:
+    st.session_state.card_form_epoch = 0
+if "card_form_versions" not in st.session_state:
+    st.session_state.card_form_versions = {}
 
 # --- STEP 1: INPUT FORM ---
 st.subheader("1. Input Words & Select Lesson")
@@ -396,6 +396,8 @@ if st.button("✨ Generate Initial Flashcards", type="primary"):
                     parsed_items
                 )
                 st.session_state.cards_data = cards
+                st.session_state.card_form_epoch += 1
+                st.session_state.card_form_versions = {}
                 st.success(f"Generated {len(cards)} cards! Review them below.")
                 st.rerun()
             except Exception as e:
@@ -405,7 +407,10 @@ if st.button("✨ Generate Initial Flashcards", type="primary"):
 if st.session_state.cards_data:
     st.divider()
     st.subheader("2. Review, Edit & Regenerate Cards")
-    st.info("Edit any text directly below. Click '🔄 Regenerate' on any specific card to refresh it with Gemini.")
+    st.info(
+        "Edit a card, then click Save edits or Regenerate. Regenerate submits the "
+        "visible values directly, so you do not need to press Enter first."
+    )
 
     st.session_state.shared_tag = st.text_input(
         "Shared tag for all cards",
@@ -418,64 +423,96 @@ if st.session_state.cards_data:
     with col_actions2:
         if st.button("🗑️ Reset All Cards", use_container_width=True):
             st.session_state.cards_data = None
+            st.session_state.card_form_epoch += 1
+            st.session_state.card_form_versions = {}
             st.rerun()
-
-    # Sync active input widgets back to state before rendering
-    for idx in range(len(st.session_state.cards_data)):
-        if f"fr_w_{idx}" in st.session_state:
-            st.session_state.cards_data[idx]["fr_word"] = st.session_state[f"fr_w_{idx}"]
-            st.session_state.cards_data[idx]["fr_phrase"] = st.session_state[f"fr_p_{idx}"]
-            st.session_state.cards_data[idx]["en_word"] = st.session_state[f"en_w_{idx}"]
-            st.session_state.cards_data[idx]["en_phrase"] = st.session_state[f"en_p_{idx}"]
-            st.session_state.cards_data[idx]["extra_notes"] = st.session_state[f"notes_{idx}"]
 
     cards_list = st.session_state.cards_data
 
     for idx, card in enumerate(cards_list):
         with st.expander(f"📌 Card {idx + 1}: **{card.get('fr_word', 'New Card')}** ➔ {card.get('en_word', '')}", expanded=True):
-            col_fr, col_en, col_opt = st.columns([2, 2, 1])
-            
-            with col_fr:
-                fr_word_val = st.text_input("French Word", value=card.get("fr_word", ""), key=f"fr_w_{idx}")
-                fr_phrase_val = st.text_area("French Sentence", value=card.get("fr_phrase", ""), key=f"fr_p_{idx}", height=80)
+            form_version = st.session_state.card_form_versions.get(idx, 0)
+            widget_prefix = f"card_{st.session_state.card_form_epoch}_{idx}_{form_version}"
+            widget_keys = {
+                "fr_word": f"{widget_prefix}_fr_word",
+                "fr_phrase": f"{widget_prefix}_fr_phrase",
+                "en_word": f"{widget_prefix}_en_word",
+                "en_phrase": f"{widget_prefix}_en_phrase",
+                "extra_notes": f"{widget_prefix}_notes",
+            }
+            with st.form(key=f"{widget_prefix}_form", border=False):
+                col_fr, col_en, col_opt = st.columns([2, 2, 1])
 
-            with col_en:
-                en_word_val = st.text_input("English Word", value=card.get("en_word", ""), key=f"en_w_{idx}")
-                en_phrase_val = st.text_area("English Sentence", value=card.get("en_phrase", ""), key=f"en_p_{idx}", height=80)
+                with col_fr:
+                    fr_word_val = st.text_input(
+                        "French Word",
+                        value=card.get("fr_word", ""),
+                        key=widget_keys["fr_word"],
+                    )
+                    fr_phrase_val = st.text_area(
+                        "French Sentence",
+                        value=card.get("fr_phrase", ""),
+                        key=widget_keys["fr_phrase"],
+                        height=80,
+                    )
 
-            with col_opt:
-                notes_val = st.text_input("Notes", value=card.get("extra_notes", ""), key=f"notes_{idx}")
-                st.write("")
-                st.write("")
-                if st.button("🔄 Regenerate", key=f"regen_{idx}", use_container_width=True):
-                    latest_card = {
-                        "fr_word": fr_word_val,
-                        "fr_phrase": fr_phrase_val,
-                        "en_word": en_word_val,
-                        "en_phrase": en_phrase_val,
-                        "extra_notes": notes_val
-                    }
+                with col_en:
+                    en_word_val = st.text_input(
+                        "English Word",
+                        value=card.get("en_word", ""),
+                        key=widget_keys["en_word"],
+                    )
+                    en_phrase_val = st.text_area(
+                        "English Sentence",
+                        value=card.get("en_phrase", ""),
+                        key=widget_keys["en_phrase"],
+                        height=80,
+                    )
 
-                    with st.spinner(f"Regenerating Card {idx + 1}..."):
-                        try:
-                            updated_card = regenerate_single_card(
-                                api_key,
-                                model_choice,
-                                st.session_state.selected_lesson,
-                                lessons[st.session_state.selected_lesson],
-                                latest_card
-                            )
-                            # Update backing dict and clear widget key state so it re-initializes on rerun
-                            st.session_state.cards_data[idx] = updated_card
-                            
-                            for k in [f"fr_w_{idx}", f"fr_p_{idx}", f"en_w_{idx}", f"en_p_{idx}", f"notes_{idx}"]:
-                                if k in st.session_state:
-                                    del st.session_state[k]
+                with col_opt:
+                    notes_val = st.text_input(
+                        "Notes",
+                        value=card.get("extra_notes", ""),
+                        key=widget_keys["extra_notes"],
+                    )
+                    save_clicked = st.form_submit_button("💾 Save edits", use_container_width=True)
+                    regenerate_clicked = st.form_submit_button(
+                        "🔄 Regenerate", use_container_width=True
+                    )
 
-                            st.toast(f"Card {idx + 1} updated!", icon="🎉")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Failed to regenerate card: {str(e)}")
+                submitted_card = {
+                    "fr_word": fr_word_val,
+                    "fr_phrase": fr_phrase_val,
+                    "en_word": en_word_val,
+                    "en_phrase": en_phrase_val,
+                    "extra_notes": notes_val,
+                }
+
+                if save_clicked:
+                    st.session_state.cards_data[idx] = submitted_card
+                    st.toast(f"Card {idx + 1} saved!", icon="💾")
+                    st.rerun()
+
+                if regenerate_clicked:
+                    if not api_key:
+                        st.error("Please provide a Gemini API Key.")
+                    else:
+                        with st.spinner(f"Regenerating Card {idx + 1}..."):
+                            try:
+                                updated_card = regenerate_single_card(
+                                    api_key,
+                                    model_choice,
+                                    st.session_state.selected_lesson,
+                                    lessons[st.session_state.selected_lesson],
+                                    previous_card=card,
+                                    current_card=submitted_card,
+                                )
+                                st.session_state.cards_data[idx] = updated_card
+                                st.session_state.card_form_versions[idx] = form_version + 1
+                                st.toast(f"Card {idx + 1} updated!", icon="🎉")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Failed to regenerate card: {str(e)}")
 
     # --- STEP 3: APPROVE & DOWNLOAD ---
     st.divider()
