@@ -1442,13 +1442,17 @@ if st.session_state.cards_data:
                         const packageUrl = URL.createObjectURL(new Blob(
                           [bytes], {{ type: "application/octet-stream" }}
                         ));
-                        const link = document.createElement("a");
+                        // The component itself is an iframe. Add the link to the
+                        // app page so its sandbox cannot prevent the download.
+                        const appDocument = window.parent.document;
+                        const link = appDocument.createElement("a");
                         link.href = packageUrl;
                         link.download = {json.dumps(export_file_name)};
-                        document.body.appendChild(link);
+                        appDocument.body.appendChild(link);
                         link.click();
                         link.remove();
-                        URL.revokeObjectURL(packageUrl);
+                        // Let the browser start reading the blob before freeing it.
+                        setTimeout(() => URL.revokeObjectURL(packageUrl), 1000);
                         </script>''',
                         height=0,
                     )
