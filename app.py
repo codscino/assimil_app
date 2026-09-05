@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 import json
 import re
 import io
+from streamlit.components.v1 import declare_component
 
 from flashcard_regeneration import build_regeneration_prompt
 
@@ -205,35 +206,51 @@ def get_lesson_number(lesson_name):
     match = re.search(r'\d+', lesson_name)
     return int(match.group()) if match else None
 
+paste_input = declare_component(
+    "paste_input",
+    path="paste_input_component",
+)
+
+
+def parse_input_line(line):
+    match = re.match(r'^(.*?)\s*\((.*)\)\s*$', line)
+    if match:
+        return match.group(1).strip(), match.group(2).strip()
+
+    word, separator, notes = line.partition("(")
+    return word.strip(), notes.rstrip(") ").strip() if separator else ""
+
+
 def parse_user_input(raw_text):
     items = []
     pending_line = ""
     lines = raw_text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
     for line in lines:
+        has_list_marker = bool(re.match(r'^\s*(?:[•●▪◦☐☑-]|\d+[.)])\s+', line))
         line = re.sub(r'^\s*(?:[•●▪◦☐☑-]|\d+[.)])\s+', "", line).strip()
         if not line:
             continue
+
+        if pending_line and (has_list_marker or "(" in line):
+            word, notes = parse_input_line(pending_line)
+            if word:
+                items.append({"raw_word": word, "user_notes": notes})
+            pending_line = ""
 
         pending_line = f"{pending_line} {line}".strip()
         if pending_line.count("(") > pending_line.count(")"):
             continue
 
-        match = re.search(r'^(.*?)(?:\((.*?)\))?$', pending_line)
-        if match:
-            word = match.group(1).strip()
-            notes = match.group(2).strip() if match.group(2) else ""
-            if word:
-                items.append({"raw_word": word, "user_notes": notes})
+        word, notes = parse_input_line(pending_line)
+        if word:
+            items.append({"raw_word": word, "user_notes": notes})
         pending_line = ""
 
     if pending_line:
-        match = re.search(r'^(.*?)(?:\((.*?)\))?$', pending_line)
-        if match:
-            word = match.group(1).strip()
-            notes = match.group(2).strip() if match.group(2) else ""
-            if word:
-                items.append({"raw_word": word, "user_notes": notes})
+        word, notes = parse_input_line(pending_line)
+        if word:
+            items.append({"raw_word": word, "user_notes": notes})
 
     return items
 
@@ -436,16 +453,25 @@ with c1:
         st.session_state.shared_tag_editor = new_lesson_tag
 
 with c2:
-    st.markdown("""
-    **Enter target words/phrases (one per line):**  
-    Add extra notes in parentheses `()`.  
-    *Example:* `comment allez vous (formal way to ask how someone is)`
-    """)
-    user_input = st.text_area(
-        "Target Words",
-        height=120,
-        placeholder="bonjour\ncomment ça va\ns'il vous plaît (please)\nmerci beaucoup"
+    st.markdown(
+        """
+        <style>
+        [data-testid="stTextArea"] [data-testid="InputInstructions"] {
+            display: none;
+        }
+        </style>
+        **Enter target words/phrases (one per line):**
+        Add extra notes in parentheses `()`.
+        *Example:* `comment allez vous (formal way to ask how someone is)`
+        """,
+        unsafe_allow_html=True,
     )
+    user_input = paste_input(
+        value="",
+        placeholder="bonjour\ncomment ça va\ns'il vous plaît (please)\nmerci beaucoup",
+        key="target_words_input",
+        default="",
+    ) or ""
 
 if st.button("✨ Generate Initial Flashcards", type="primary"):
     if not api_key:

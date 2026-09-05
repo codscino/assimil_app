@@ -1,0 +1,80 @@
+<!doctype html>
+<html>
+  <head>
+    <script src="https://unpkg.com/streamlit-component-lib@2.0.0/dist/index.js"></script>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: sans-serif;
+      }
+      .toolbar {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 0.5rem;
+      }
+      textarea {
+        width: 100%;
+        min-height: 120px;
+        resize: vertical;
+        padding: 0.75rem;
+        border: 1px solid #b8bec8;
+        border-radius: 0.4rem;
+        font: inherit;
+      }
+      button {
+        border: 1px solid #b8bec8;
+        border-radius: 0.4rem;
+        background: white;
+        padding: 0.45rem 0.75rem;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #f1f3f5;
+      }
+      .status {
+        color: #666;
+        font-size: 0.8rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="toolbar">
+      <button id="paste" type="button">Paste from clipboard</button>
+      <span class="status" id="status"></span>
+    </div>
+    <textarea id="input"></textarea>
+    <script>
+      const input = document.getElementById("input");
+      const pasteButton = document.getElementById("paste");
+      const status = document.getElementById("status");
+
+      function sendValue() {
+        Streamlit.setComponentValue(input.value);
+      }
+
+      function render(event) {
+        const value =
+          event.detail.args.value ?? event.detail.args.default ?? "";
+        if (document.activeElement !== input) input.value = value;
+        Streamlit.setFrameHeight(document.body.scrollHeight);
+      }
+
+      pasteButton.addEventListener("click", async () => {
+        try {
+          input.value = await navigator.clipboard.readText();
+          sendValue();
+          status.textContent = "Pasted";
+        } catch (error) {
+          status.textContent = "Tap the field and use Paste";
+        }
+      });
+      input.addEventListener("change", sendValue);
+      Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, render);
+      Streamlit.setComponentReady();
+      Streamlit.setFrameHeight(document.body.scrollHeight);
+    </script>
+  </body>
+</html>
