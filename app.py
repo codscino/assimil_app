@@ -42,11 +42,64 @@ const phrase = document.querySelector(".phrase");
 const word = document.querySelector(".target-word")?.textContent.trim();
 
 if (phrase && word) {
-  const escaped = word.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
-  phrase.innerHTML = phrase.innerHTML.replace(
-    new RegExp(escaped, "gi"),
-    "<span class='highlight'>$&</span>"
-  );
+  const normalizeForMatch = (input) => {
+    let normalized = "";
+    const positions = [];
+
+    for (let start = 0; start < input.length;) {
+      const character = String.fromCodePoint(input.codePointAt(start));
+      const end = start + character.length;
+
+      if (/\s/u.test(character)) {
+        if (normalized && !normalized.endsWith(" ")) {
+          normalized += " ";
+          positions.push({ start, end });
+        } else if (normalized.endsWith(" ")) {
+          positions[positions.length - 1].end = end;
+        }
+      } else {
+        const folded = character
+          .normalize("NFKD")
+          .replace(/\p{M}/gu, "")
+          .toLowerCase()
+          .replace(/[’‘‛`]/g, "'")
+          .replace(/[‐‑‒–—]/g, "-")
+          .replace(/œ/g, "oe")
+          .replace(/æ/g, "ae");
+        for (const foldedCharacter of folded) {
+          normalized += foldedCharacter;
+          positions.push({ start, end });
+        }
+      }
+      start = end;
+    }
+
+    if (normalized.endsWith(" ")) {
+      normalized = normalized.slice(0, -1);
+      positions.pop();
+    }
+    return { normalized, positions };
+  };
+
+  const original = phrase.textContent;
+  const phraseMatch = normalizeForMatch(original);
+  const targetMatch = normalizeForMatch(word);
+  const matchIndex = phraseMatch.normalized.indexOf(targetMatch.normalized);
+
+  if (targetMatch.normalized && matchIndex !== -1) {
+    const start = phraseMatch.positions[matchIndex].start;
+    const end = phraseMatch.positions[
+      matchIndex + targetMatch.normalized.length - 1
+    ].end;
+    const highlight = document.createElement("span");
+    highlight.className = "highlight";
+    highlight.textContent = original.slice(start, end);
+    phrase.replaceChildren(
+      document.createTextNode(original.slice(0, start)),
+      highlight,
+      document.createTextNode(original.slice(end))
+    );
+  }
 }
 </script>
 """
@@ -83,11 +136,42 @@ const phrase = document.querySelector(".phrase");
 const word = document.querySelector(".target-word")?.textContent.trim();
 
 if (phrase && word) {
-  const escaped = word.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
-  phrase.innerHTML = phrase.innerHTML.replace(
-    new RegExp(escaped, "gi"),
-    "<span class='highlight'>$&</span>"
-  );
+  const normalizeForMatch = (input) => {
+    let normalized = "";
+    const positions = [];
+    for (let start = 0; start < input.length;) {
+      const character = String.fromCodePoint(input.codePointAt(start));
+      const end = start + character.length;
+      if (/\s/u.test(character)) {
+        if (normalized && !normalized.endsWith(" ")) {
+          normalized += " "; positions.push({ start, end });
+        } else if (normalized.endsWith(" ")) positions[positions.length - 1].end = end;
+      } else {
+        const folded = character.normalize("NFKD").replace(/\p{M}/gu, "")
+          .toLowerCase().replace(/[’‘‛`]/g, "'").replace(/[‐‑‒–—]/g, "-")
+          .replace(/œ/g, "oe").replace(/æ/g, "ae");
+        for (const foldedCharacter of folded) {
+          normalized += foldedCharacter; positions.push({ start, end });
+        }
+      }
+      start = end;
+    }
+    if (normalized.endsWith(" ")) { normalized = normalized.slice(0, -1); positions.pop(); }
+    return { normalized, positions };
+  };
+  const original = phrase.textContent;
+  const phraseMatch = normalizeForMatch(original);
+  const targetMatch = normalizeForMatch(word);
+  const matchIndex = phraseMatch.normalized.indexOf(targetMatch.normalized);
+  if (targetMatch.normalized && matchIndex !== -1) {
+    const start = phraseMatch.positions[matchIndex].start;
+    const end = phraseMatch.positions[matchIndex + targetMatch.normalized.length - 1].end;
+    const highlight = document.createElement("span");
+    highlight.className = "highlight";
+    highlight.textContent = original.slice(start, end);
+    phrase.replaceChildren(document.createTextNode(original.slice(0, start)), highlight,
+      document.createTextNode(original.slice(end)));
+  }
 }
 </script>
 """
