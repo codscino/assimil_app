@@ -6,8 +6,6 @@ from pydantic import BaseModel, Field
 import json
 import re
 import io
-import os
-from streamlit.components.v1 import declare_component
 
 from flashcard_regeneration import build_regeneration_prompt
 
@@ -206,12 +204,6 @@ def get_lesson_number(lesson_name):
     """Return the numeric part of a lesson key, e.g. ``Lesson 12`` -> 12."""
     match = re.search(r'\d+', lesson_name)
     return int(match.group()) if match else None
-
-paste_input = declare_component(
-    "paste_input",
-    path=os.path.join(os.path.dirname(__file__), "paste_input_component"),
-)
-
 
 def parse_input_line(line):
     match = re.match(r'^(.*?)\s*\((.*)\)\s*$', line)
@@ -454,25 +446,16 @@ with c1:
         st.session_state.shared_tag_editor = new_lesson_tag
 
 with c2:
-    st.markdown(
-        """
-        <style>
-        [data-testid="stTextArea"] [data-testid="InputInstructions"] {
-            display: none;
-        }
-        </style>
-        **Enter target words/phrases (one per line):**
-        Add extra notes in parentheses `()`.
-        *Example:* `comment allez vous (formal way to ask how someone is)`
-        """,
-        unsafe_allow_html=True,
+    st.markdown("""
+    **Enter target words/phrases (one per line):**
+    Add extra notes in parentheses `()`.
+    *Example:* `comment allez vous (formal way to ask how someone is)`
+    """)
+    user_input = st.text_area(
+        "Target Words",
+        height=120,
+        placeholder="bonjour\ncomment ça va\ns'il vous plaît (please)\nmerci beaucoup"
     )
-    user_input = paste_input(
-        value="",
-        placeholder="bonjour\ncomment ça va\ns'il vous plaît (please)\nmerci beaucoup",
-        key="target_words_input",
-        default="",
-    ) or ""
 
 if st.button("✨ Generate Initial Flashcards", type="primary"):
     if not api_key:
