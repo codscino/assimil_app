@@ -107,12 +107,13 @@ BACK_FR2EN = r"""
 
 <hr id="answer">
 {{type:en_word}}
+<span class="expected-answer">{{text:en_word}}</span>
 
 <script>
 // Make the typed-answer display ignore casing, whitespace, and diacritics.
 (() => {
   const answer = document.getElementById("typeans");
-  const expected = document.querySelector(".target-word")?.textContent ?? "";
+  const expected = document.querySelector(".expected-answer")?.textContent ?? "";
   const key = "assimil-typed-answer";
   let entered;
   try { entered = sessionStorage.getItem(key); sessionStorage.removeItem(key); } catch (_) {}
@@ -288,12 +289,13 @@ BACK_EN2FR = r"""
 
 <hr id="answer">
 {{type:fr_word}}
+<span class="expected-answer">{{text:fr_word}}</span>
 
 <script>
 // Make the typed-answer display ignore casing, whitespace, and diacritics.
 (() => {
   const answer = document.getElementById("typeans");
-  const expected = document.querySelector(".target-word")?.textContent ?? "";
+  const expected = document.querySelector(".expected-answer")?.textContent ?? "";
   const key = "assimil-typed-answer";
   let entered;
   try { entered = sessionStorage.getItem(key); sessionStorage.removeItem(key); } catch (_) {}
@@ -384,7 +386,7 @@ CARD_STYLE = r"""
 .phrase {
   margin-bottom: 4px;
 }
-.target-word {
+.target-word, .expected-answer {
   display: none;
 }
 .translation {
