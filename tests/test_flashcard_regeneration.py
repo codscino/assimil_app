@@ -65,6 +65,21 @@ class RegenerationContextTests(unittest.TestCase):
         self.assertIn("free French practice", prompt)
         self.assertNotIn("This lesson text must not be used", prompt)
 
+    def test_prompt_uses_selected_target_language(self):
+        current = dict(self.previous, en_word="ciao")
+
+        prompt = build_regeneration_prompt(
+            "Lesson 2",
+            "assimil_lesson_02",
+            ["lesson context"],
+            self.previous,
+            current,
+            target_language="Italian",
+        )
+
+        self.assertIn("Primary source of truth: Italian word (`en_word`)", prompt)
+        self.assertIn("exact Italian translation", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

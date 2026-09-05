@@ -35,12 +35,21 @@ def regeneration_source(previous_card, current_card):
 
 
 def build_regeneration_prompt(
-    lesson_name, lesson_tag, lesson_data, previous_card, current_card, no_assimil_mode=False
+    lesson_name,
+    lesson_tag,
+    lesson_data,
+    previous_card,
+    current_card,
+    no_assimil_mode=False,
+    target_language="English",
 ):
     """Build a prompt based on the values submitted from a flashcard form."""
     source_field, changed_fields = regeneration_source(previous_card, current_card)
+    field_labels = dict(FIELD_LABELS)
+    field_labels["en_word"] = f"{target_language} word"
+    field_labels["en_phrase"] = f"{target_language} phrase"
     source_description = (
-        f"{FIELD_LABELS[source_field]} (`{source_field}`)"
+        f"{field_labels[source_field]} (`{source_field}`)"
         if source_field
         else "none (all content fields are empty)"
     )
@@ -81,9 +90,10 @@ def build_regeneration_prompt(
     3. Resolve conflicts in this strict order: `fr_word` > `fr_phrase` > `en_word`
        > `en_phrase`. The primary source of truth identifies the highest-priority
        non-empty field explicitly edited by the user.
-    4. Return a concise natural `fr_word`, its exact `en_word` translation, a natural
-       `fr_phrase` containing `fr_word` (case-insensitive), and an `en_phrase` that
-       translates the French phrase and contains `en_word` (case-insensitive).
+    4. Return a concise natural `fr_word`, its exact {target_language} translation
+       in the legacy JSON field `en_word`, a natural `fr_phrase` containing
+       `fr_word` (case-insensitive), and a {target_language} translation in the
+       legacy JSON field `en_phrase` that contains `en_word` (case-insensitive).
     5. Preserve `extra_notes` exactly, including when it is empty.
     6. Return valid JSON matching the requested schema.
     """

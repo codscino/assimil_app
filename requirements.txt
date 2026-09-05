@@ -3,3 +3,4 @@ genanki
 google-genai
 pydantic
 requests
+extra-streamlit-components==0.1.81

@@ -10,9 +10,11 @@ import html
 import hashlib
 import tempfile
 import unicodedata
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
+import extra_streamlit_components as stx
 
 from flashcard_regeneration import build_regeneration_prompt
 
@@ -23,6 +25,17 @@ from flashcard_regeneration import build_regeneration_prompt
 MODEL_ID = 1607392320
 FR2EN_DECK_ID = 2059500001
 EN2FR_DECK_ID = 2059500002
+
+TARGET_LANGUAGES = {
+    "en": {"name": "English", "flag": "🇬🇧", "deck_code": "EN"},
+    "it": {"name": "Italian", "flag": "🇮🇹", "deck_code": "IT"},
+    "es": {"name": "Spanish", "flag": "🇪🇸", "deck_code": "ES"},
+    "pt": {"name": "Portuguese", "flag": "🇵🇹", "deck_code": "PT"},
+    "ko": {"name": "Korean", "flag": "🇰🇷", "deck_code": "KO"},
+    "ru": {"name": "Russian", "flag": "🇷🇺", "deck_code": "RU"},
+    "nl": {"name": "Dutch", "flag": "🇳🇱", "deck_code": "NL"},
+}
+LANGUAGE_COOKIE = "assimil_target_language"
 
 FRONT_FR2EN = r"""
 {{#fr_phrase}}
@@ -391,33 +404,62 @@ CARD_STYLE = r"""
 }
 """
 
-anki_model = genanki.Model(
-    MODEL_ID,
-    'Assimil French Model EN',
-    fields=[
-        {'name': 'fr_word'},
-        {'name': 'fr_phrase'},
-        {'name': 'en_word'},
-        {'name': 'en_phrase'},
-        {'name': 'extra_notes'},
-        {'name': 'fr_audio'},
-    ],
-    templates=[
-        {
-            'name': 'FR -> EN',
-            'qfmt': FRONT_FR2EN,
-            'afmt': BACK_FR2EN,
-            'did': FR2EN_DECK_ID,
-        },
-        {
-            'name': 'EN -> FR',
-            'qfmt': FRONT_EN2FR,
-            'afmt': BACK_EN2FR,
-            'did': EN2FR_DECK_ID,
-        },
-    ],
-    css=CARD_STYLE
-)
+def language_anki_ids(language_code):
+    """Return stable, distinct Anki IDs for a target language."""
+    if language_code == "en":
+        return MODEL_ID, FR2EN_DECK_ID, EN2FR_DECK_ID
+
+    def stable_id(value):
+        digest = hashlib.sha256(value.encode("utf-8")).digest()
+        return 1_000_000_000 + int.from_bytes(digest[:4], "big") % 1_000_000_000
+
+    return (
+        stable_id(f"assimil-model-{language_code}"),
+        stable_id(f"assimil-fr-to-{language_code}"),
+        stable_id(f"assimil-{language_code}-to-fr"),
+    )
+
+
+def build_anki_model(language_code):
+    """Build a model whose target fields and templates match the language."""
+    language = TARGET_LANGUAGES[language_code]
+    deck_code = language["deck_code"]
+    model_id, fr_to_target_id, target_to_fr_id = language_anki_ids(language_code)
+    target_word_field = f"{language_code}_word"
+    target_phrase_field = f"{language_code}_phrase"
+
+    def target_fields(template):
+        return template.replace("en_word", target_word_field).replace(
+            "en_phrase", target_phrase_field
+        )
+
+    return genanki.Model(
+        model_id,
+        f"Assimil French Model {deck_code}",
+        fields=[
+            {"name": "fr_word"},
+            {"name": "fr_phrase"},
+            {"name": target_word_field},
+            {"name": target_phrase_field},
+            {"name": "extra_notes"},
+            {"name": "fr_audio"},
+        ],
+        templates=[
+            {
+                "name": f"FR -> {deck_code}",
+                "qfmt": target_fields(FRONT_FR2EN),
+                "afmt": target_fields(BACK_FR2EN),
+                "did": fr_to_target_id,
+            },
+            {
+                "name": f"{deck_code} -> FR",
+                "qfmt": target_fields(FRONT_EN2FR),
+                "afmt": target_fields(BACK_EN2FR),
+                "did": target_to_fr_id,
+            },
+        ],
+        css=CARD_STYLE,
+    )
 
 # -----------------------------------------------------------------------------
 # 2. HELPER FUNCTIONS & SCHEMAS
@@ -425,8 +467,10 @@ anki_model = genanki.Model(
 class FlashcardItem(BaseModel):
     fr_word: str = Field(description="Cleaned target French word or expression")
     fr_phrase: str = Field(description="Natural French sentence featuring the target word matching Assimil style")
-    en_word: str = Field(description="Direct English translation of fr_word")
-    en_phrase: str = Field(description="English translation of fr_phrase")
+    # These legacy JSON keys keep existing saved cards compatible. Their values
+    # contain whichever target language the user selected.
+    en_word: str = Field(description="Direct target-language translation of fr_word")
+    en_phrase: str = Field(description="Target-language translation of fr_phrase")
     extra_notes: str = Field(description="User notes combined with brief grammar tips if useful")
 
 def load_lessons():
@@ -609,7 +653,13 @@ def parse_user_input(raw_text):
     return items
 
 def generate_flashcards_with_gemini(
-    api_key, model_name, lesson_name, lesson_data, parsed_items, no_assimil_mode=False
+    api_key,
+    model_name,
+    lesson_name,
+    lesson_data,
+    parsed_items,
+    no_assimil_mode=False,
+    target_language="English",
 ):
     client = genai.Client(api_key=api_key)
     lesson_tag_main = "french_practice" if no_assimil_mode else get_lesson_tag(lesson_name)
@@ -643,7 +693,8 @@ def generate_flashcards_with_gemini(
     1. Preserve the French target as written for `fr_word`; only correct clear spelling mistakes.
     2. Write a natural French sentence for `fr_phrase` that matches the conversational Assimil style.
        - The cleaned `fr_word` must appear inside `fr_phrase` (case-insensitive).
-    3. Write the English translation for `en_word` and `en_phrase`.
+    3. Write the {target_language} translation in the legacy JSON fields
+       `en_word` and `en_phrase`.
        - The cleaned `en_word` must appear inside `en_phrase` (case-insensitive).
     4. Keep `extra_notes` exactly as provided by the user when present, or leave empty.
     5. Keep the output JSON valid and matching the schema.
@@ -675,6 +726,7 @@ def regenerate_single_card(
     previous_card,
     current_card,
     no_assimil_mode=False,
+    target_language="English",
 ):
     client = genai.Client(api_key=api_key)
     lesson_tag_main = "french_practice" if no_assimil_mode else get_lesson_tag(lesson_name)
@@ -686,6 +738,7 @@ def regenerate_single_card(
         previous_card,
         current_card,
         no_assimil_mode=no_assimil_mode,
+        target_language=target_language,
     )
 
     response = client.models.generate_content(
@@ -763,6 +816,7 @@ def build_anki_apkg(
     elevenlabs_api_key,
     elevenlabs_voice_id,
     shared_tag=None,
+    target_language_code="en",
 ):
     lesson_num = re.sub(r'\D', '', lesson_name) or "01"
     lesson_num_padded = lesson_num.zfill(2)
@@ -771,10 +825,17 @@ def build_anki_apkg(
     if not tag_name:
         tag_name = f"assimil_lesson_{lesson_num_padded}"
     
-    # FR -> EN is the source deck; DirectionalDeck moves each EN -> FR card
-    # (template ordinal 1) to the fixed reverse deck.
-    deck = DirectionalDeck(FR2EN_DECK_ID, "FR2EN", EN2FR_DECK_ID)
-    reverse_deck = genanki.Deck(EN2FR_DECK_ID, "EN2FR")
+    language = TARGET_LANGUAGES[target_language_code]
+    deck_code = language["deck_code"]
+    _, fr_to_target_id, target_to_fr_id = language_anki_ids(target_language_code)
+    anki_model = build_anki_model(target_language_code)
+
+    # The forward deck owns each note; DirectionalDeck moves template ordinal 1
+    # to the fixed reverse deck for this target language.
+    deck = DirectionalDeck(
+        fr_to_target_id, f"FR2{deck_code}", target_to_fr_id
+    )
+    reverse_deck = genanki.Deck(target_to_fr_id, f"{deck_code}2FR")
     
     with tempfile.TemporaryDirectory() as temp_dir:
         media_files = []
@@ -783,8 +844,8 @@ def build_anki_apkg(
         for item in cards_data:
             french_word = item.get("fr_word", "")
             french_phrase = item.get("fr_phrase", "")
-            english_word = item.get("en_word", "")
-            english_phrase = item.get("en_phrase", "")
+            target_word = item.get("en_word", "")
+            target_phrase = item.get("en_phrase", "")
             french_text = (french_phrase or french_word).strip()
             audio_field = ""
             if french_text:
@@ -808,8 +869,8 @@ def build_anki_apkg(
                 fields=[
                     french_word,
                     highlight_target(french_phrase, french_word),
-                    english_word,
-                    highlight_target(english_phrase, english_word),
+                    target_word,
+                    highlight_target(target_phrase, target_word),
                     item.get("extra_notes", ""),
                     audio_field,
                 ],
@@ -829,17 +890,67 @@ def build_anki_apkg(
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Assimil Anki Generator", page_icon="🇫🇷", layout="wide")
 
-header_col1, header_col2 = st.columns([3, 1])
+cookie_manager = stx.CookieManager(key="assimil_language_cookie_manager")
+saved_target_language = cookie_manager.get(LANGUAGE_COOKIE)
+saved_language_is_valid = saved_target_language in TARGET_LANGUAGES
+
+# Cookie components report their browser value after their first render. Apply
+# it on the following rerun, before the selectbox widget is instantiated.
+if "target_language" not in st.session_state:
+    st.session_state.target_language = (
+        saved_target_language if saved_language_is_valid else "en"
+    )
+if saved_language_is_valid and not st.session_state.get("language_cookie_applied"):
+    st.session_state.target_language = saved_target_language
+    st.session_state.language_cookie_applied = True
+
+header_col1, header_col_language, header_col_model = st.columns([3, 1.15, 1.15])
 
 with header_col1:
     st.title("🇫🇷 Assimil French Anki Generator")
 
-with header_col2:
+with header_col_language:
+    target_language_code = st.selectbox(
+        "Language",
+        options=list(TARGET_LANGUAGES),
+        key="target_language",
+        format_func=lambda code: (
+            f"{TARGET_LANGUAGES[code]['flag']} {TARGET_LANGUAGES[code]['name']}"
+        ),
+    )
+
+with header_col_model:
     model_choice = st.selectbox(
         "Model",
         ["gemini-3.5-flash-lite", "gemini-3.5-flash"],
         index=0
     )
+
+target_language = TARGET_LANGUAGES[target_language_code]
+target_language_name = target_language["name"]
+
+cookie_value = st.session_state.get(
+    "persisted_target_language",
+    saved_target_language if saved_language_is_valid else "en",
+)
+if target_language_code != cookie_value:
+    cookie_manager.set(
+        LANGUAGE_COOKIE,
+        target_language_code,
+        key=f"save_target_language_{target_language_code}",
+        expires_at=datetime.now() + timedelta(days=365),
+    )
+    st.session_state.persisted_target_language = target_language_code
+    st.session_state.language_cookie_applied = True
+
+# Existing translations cannot safely be relabelled as another language.
+previous_language = st.session_state.get("cards_target_language", target_language_code)
+if previous_language != target_language_code and st.session_state.get("cards_data"):
+    st.session_state.cards_data = None
+    st.session_state.card_regeneration_baselines = []
+    st.session_state.card_form_versions = {}
+    st.toast("Language changed. Generate a new translated deck.", icon="🌐")
+st.session_state.cards_target_language = target_language_code
 
 api_key = st.secrets.get("GEMINI_API_KEY", "")
 if not api_key:
@@ -980,8 +1091,10 @@ if st.button("✨ Generate Initial Flashcards", type="primary"):
                     lesson_data,
                     parsed_items,
                     no_assimil_mode=no_assimil_mode,
+                    target_language=target_language_name,
                 )
                 st.session_state.cards_data = cards
+                st.session_state.cards_target_language = target_language_code
                 st.session_state.card_regeneration_baselines = [
                     dict(card) for card in cards
                 ]
@@ -1076,7 +1189,7 @@ if st.session_state.cards_data:
                     "extra_notes": f"{widget_prefix}_notes",
                 }
                 all_widget_keys[idx] = widget_keys
-                col_fr, col_en, col_opt = st.columns([2, 2, 1])
+                col_fr, col_target, col_opt = st.columns([2, 2, 1])
 
                 with col_fr:
                     st.text_input(
@@ -1095,16 +1208,16 @@ if st.session_state.cards_data:
                         args=(idx, "fr_phrase", widget_keys["fr_phrase"]),
                     )
 
-                with col_en:
+                with col_target:
                     st.text_input(
-                        "English Word",
+                        f"{target_language_name} Word",
                         value=card.get("en_word", ""),
                         key=widget_keys["en_word"],
                         on_change=save_card_field,
                         args=(idx, "en_word", widget_keys["en_word"]),
                     )
                     st.text_area(
-                        "English Sentence",
+                        f"{target_language_name} Sentence",
                         value=card.get("en_phrase", ""),
                         key=widget_keys["en_phrase"],
                         height=60,
@@ -1142,6 +1255,7 @@ if st.session_state.cards_data:
                                     previous_card=previous_card,
                                     current_card=submitted_card,
                                     no_assimil_mode=no_assimil_mode,
+                                    target_language=target_language_name,
                                 )
                                 st.session_state.cards_data[idx] = updated_card
                                 st.session_state.card_regeneration_baselines[idx] = dict(
@@ -1221,9 +1335,12 @@ if st.session_state.cards_data:
             voice_for_export = selected_voice_id
             lesson_num = re.sub(r'\D', '', lesson_for_export) or "01"
             export_file_name = (
-                "French_Practice.apkg"
+                f"French_{target_language['deck_code']}_Practice.apkg"
                 if no_assimil_mode
-                else f"Assimil_Lesson_{lesson_num.zfill(2)}.apkg"
+                else (
+                    f"Assimil_FR2{target_language['deck_code']}_"
+                    f"Lesson_{lesson_num.zfill(2)}.apkg"
+                )
             )
 
             def generate_package_on_download():
@@ -1233,6 +1350,7 @@ if st.session_state.cards_data:
                     elevenlabs_api_key,
                     voice_for_export,
                     shared_tag=tag_for_export,
+                    target_language_code=target_language_code,
                 ).getvalue()
 
             st.download_button(
