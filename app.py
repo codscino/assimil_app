@@ -425,6 +425,8 @@ def synthesize_french_audio(elevenlabs_api_key, voice_id, text):
             "text": text,
             "model_id": "eleven_multilingual_v2",
             "language_code": "fr",
+            # ElevenLabs supports 0.7–1.2; 0.7 is its slowest supported pace.
+            "voice_settings": {"speed": 0.7},
         },
         timeout=60,
     )
@@ -808,7 +810,8 @@ if st.session_state.cards_data:
             )
             voice_by_id = {voice["voice_id"]: voice for voice in elevenlabs_voices}
 
-            export_col, voice_col = st.columns([2, 1])
+            # Keep voice choice/preview before the export action, at half width.
+            voice_col, _ = st.columns(2)
             with voice_col:
                 selected_voice_id = st.selectbox(
                     "French ElevenLabs voice",
@@ -838,31 +841,30 @@ if st.session_state.cards_data:
                 if preview_audio := st.session_state.get("elevenlabs_preview_audio"):
                     st.audio(preview_audio, format="audio/mpeg")
 
-            with export_col:
-                if st.button(
-                    "📦 Approve All & Generate .apkg Package",
-                    type="primary",
-                    use_container_width=True,
-                ):
-                    try:
-                        with st.spinner("Generating ElevenLabs French audio and packaging deck..."):
-                            st.session_state.apkg_buffer = build_anki_apkg(
-                                st.session_state.cards_data,
-                                st.session_state.selected_lesson,
-                                elevenlabs_api_key,
-                                selected_voice_id,
-                                shared_tag=st.session_state.shared_tag,
-                            ).getvalue()
-                        st.success("Package is ready to download.")
-                    except requests.RequestException as error:
-                        st.error(f"Could not generate ElevenLabs audio: {error}")
+            if st.button(
+                "📦 Approve All & Generate .apkg Package",
+                type="primary",
+                use_container_width=True,
+            ):
+                try:
+                    with st.spinner("Generating ElevenLabs French audio and packaging deck..."):
+                        st.session_state.apkg_buffer = build_anki_apkg(
+                            st.session_state.cards_data,
+                            st.session_state.selected_lesson,
+                            elevenlabs_api_key,
+                            selected_voice_id,
+                            shared_tag=st.session_state.shared_tag,
+                        ).getvalue()
+                    st.success("Package is ready to download.")
+                except requests.RequestException as error:
+                    st.error(f"Could not generate ElevenLabs audio: {error}")
 
-                if apkg_bytes := st.session_state.get("apkg_buffer"):
-                    lesson_num = re.sub(r'\D', '', st.session_state.selected_lesson) or "01"
-                    st.download_button(
-                        label="📥 Download .apkg Package",
-                        data=apkg_bytes,
-                        file_name=f"Assimil_Lesson_{lesson_num.zfill(2)}.apkg",
-                        mime="application/octet-stream",
-                        use_container_width=True,
-                    )
+            if apkg_bytes := st.session_state.get("apkg_buffer"):
+                lesson_num = re.sub(r'\D', '', st.session_state.selected_lesson) or "01"
+                st.download_button(
+                    label="📥 Download .apkg Package",
+                    data=apkg_bytes,
+                    file_name=f"Assimil_Lesson_{lesson_num.zfill(2)}.apkg",
+                    mime="application/octet-stream",
+                    use_container_width=True,
+                )
