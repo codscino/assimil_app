@@ -388,7 +388,12 @@ with c1:
     )
     if selected_lesson != st.session_state.selected_lesson:
         st.session_state.selected_lesson = selected_lesson
-        st.session_state.shared_tag = get_lesson_tag(selected_lesson)
+        new_lesson_tag = get_lesson_tag(selected_lesson)
+        st.session_state.shared_tag = new_lesson_tag
+        # The text input has its own keyed widget state. Keep it in sync here;
+        # otherwise its value from the previous lesson overwrites shared_tag
+        # when the editor is rendered later in this run.
+        st.session_state.shared_tag_editor = new_lesson_tag
 
 with c2:
     st.markdown("""
