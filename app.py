@@ -862,7 +862,32 @@ def build_anki_apkg(
 # -----------------------------------------------------------------------------
 # 3. STREAMLIT APP UI & SESSION STATE
 # -----------------------------------------------------------------------------
-st.set_page_config(page_title="Assimil Anki Generator", page_icon="🇫🇷", layout="wide")
+st.set_page_config(page_title="Anki Generator", page_icon="🇫🇷", layout="wide")
+
+# Keep the mobile header compact: Streamlit's default page gutter and wrapped
+# columns otherwise leave a large empty area before the first form section.
+st.markdown(
+    """
+    <style>
+    @media (max-width: 640px) {
+        .stMain .block-container,
+        [data-testid="stAppViewBlockContainer"],
+        [data-testid="stMainBlockContainer"] {
+            padding-top: 1.25rem;
+        }
+        .st-key-app-header [data-testid="stHorizontalBlock"] {
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+        .st-key-app-header [data-testid="stColumn"] {
+            width: 100% !important;
+            flex: 1 1 100% !important;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 preferences_result = _draft_storage(
     action="read",
@@ -898,28 +923,29 @@ if "target_language" not in st.session_state:
         saved_target_language if saved_language_is_valid else "en"
     )
 
-header_col1, header_col_language, header_col_model = st.columns([3, 1.15, 1.15])
+with st.container(key="app_header"):
+    header_col1, header_col_language, header_col_model = st.columns([3, 1.15, 1.15])
 
-with header_col1:
-    st.title("🇫🇷 Assimil French Anki Generator")
+    with header_col1:
+        st.title("Anki Generator")
 
-with header_col_language:
-    target_language_code = st.selectbox(
-        "Translate to",
-        options=list(TARGET_LANGUAGES),
-        key="target_language",
-        on_change=mark_preferences_changed,
-        format_func=lambda code: (
-            f"{TARGET_LANGUAGES[code]['flag']} {TARGET_LANGUAGES[code]['name']}"
-        ),
-    )
+    with header_col_language:
+        target_language_code = st.selectbox(
+            "Translate to",
+            options=list(TARGET_LANGUAGES),
+            key="target_language",
+            on_change=mark_preferences_changed,
+            format_func=lambda code: (
+                f"{TARGET_LANGUAGES[code]['flag']} {TARGET_LANGUAGES[code]['name']}"
+            ),
+        )
 
-with header_col_model:
-    model_choice = st.selectbox(
-        "Model",
-        ["gemini-3.5-flash-lite", "gemini-3.5-flash"],
-        index=0
-    )
+    with header_col_model:
+        model_choice = st.selectbox(
+            "Model",
+            ["gemini-3.5-flash-lite", "gemini-3.5-flash"],
+            index=0
+        )
 
 target_language = TARGET_LANGUAGES[target_language_code]
 target_language_name = target_language["name"]
@@ -1068,7 +1094,7 @@ def mark_target_words_changed():
     st.session_state.target_words_storage_applied = True
 
 # --- STEP 1: INPUT FORM ---
-st.subheader("1. Input Words & Select Lesson")
+st.subheader("1. Write your notes")
 c1, c2 = st.columns([1, 2])
 
 with c1:
@@ -1203,7 +1229,7 @@ if st.session_state.cards_data:
         ]
 
     st.divider()
-    st.subheader("2. Review, Edit & Regenerate Cards")
+    st.subheader("2. Review & Edit Cards")
     st.caption(
         "Cards start collapsed. Select Edit card to edit or regenerate it; edits save automatically."
     )
