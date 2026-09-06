@@ -45,6 +45,10 @@ _draft_storage = components.declare_component(
     "assimil_draft_storage",
     path=str(Path(__file__).parent / "components" / "draft_storage"),
 )
+_paste_textarea = components.declare_component(
+    "assimil_paste_textarea",
+    path=str(Path(__file__).parent / "components" / "paste_textarea"),
+)
 
 FRONT_FR2EN = r"""
 {{#fr_phrase}}
@@ -1154,10 +1158,40 @@ with c2:
     Add extra notes in parentheses `()`.<br>
     *Example:* `comment allez vous (formal way)`
     """, unsafe_allow_html=True)
+    paste_result = _paste_textarea(
+        textarea_label="Target Words",
+        button_label="Paste",
+        key="target_words_paste_button",
+        default=None,
+    )
+    if isinstance(paste_result, dict):
+        paste_request_id = paste_result.get("request_id")
+        if (
+            paste_request_id
+            and paste_request_id
+            != st.session_state.get("last_target_words_paste_request")
+        ):
+            st.session_state.last_target_words_paste_request = paste_request_id
+            if paste_result.get("status") == "success":
+                pasted_value = paste_result.get("value", "")
+                if (
+                    isinstance(pasted_value, str)
+                    and len(pasted_value) <= MAX_TARGET_WORDS_LENGTH
+                ):
+                    st.session_state.target_words = pasted_value
+                    st.session_state.target_words_storage_applied = True
+                    st.toast("Pasted from clipboard.", icon="📋")
+                else:
+                    st.toast("That clipboard text is too long to paste.", icon="⚠️")
+            else:
+                st.toast(
+                    "Clipboard access was blocked. Tap and hold the text box to paste.",
+                    icon="⚠️",
+                )
     user_input = st.text_area(
         "Target Words",
         key="target_words",
-        height=120,
+        height=180,
         placeholder="bonjour\ncomment ça va\ns'il vous plaît (please)\nmerci beaucoup",
         on_change=mark_target_words_changed,
     )

@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <script>
+      const BUTTON_ID = "assimil-target-words-paste";
+      let observer;
+
+      function send(type, data = {}) {
+        window.parent.postMessage(
+          { isStreamlitMessage: true, type, ...data },
+          "*"
+        );
+      }
+
+      function setValue(value) {
+        send("streamlit:setComponentValue", { value });
+      }
+
+      function requestId() {
+        return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      }
+
+      function installButton(args) {
+        const appDocument = window.parent.document;
+        const textarea = Array.from(appDocument.querySelectorAll("textarea"))
+          .find(element => element.getAttribute("aria-label") === args.textarea_label);
+        if (!textarea) return false;
+
+        appDocument.getElementById(BUTTON_ID)?.remove();
+
+        const wrapper = textarea.parentElement;
+        if (!wrapper) return false;
+        wrapper.style.position = "relative";
+        textarea.style.paddingRight = "5.5rem";
+
+        const button = appDocument.createElement("button");
+        button.id = BUTTON_ID;
+        button.type = "button";
+        button.textContent = `📋 ${args.button_label || "Paste"}`;
+        button.setAttribute("aria-label", "Paste clipboard text into Target Words");
+        button.title = "Paste from clipboard";
+        button.style.cssText = `
+          position: absolute;
+          top: 0.45rem;
+          right: 0.45rem;
+          z-index: 2;
+          min-height: 2.5rem;
+          padding: 0.35rem 0.65rem;
+          border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+          border-radius: 0.5rem;
+          background: var(--secondary-background-color, #f0f2f6);
+          color: var(--text-color, #31333f);
+          font: inherit;
+          font-size: 0.875rem;
+          font-weight: 600;
+          line-height: 1;
+          cursor: pointer;
+          touch-action: manipulation;
+          -webkit-tap-highlight-color: transparent;
+        `;
+
+        let selectionStart = textarea.value.length;
+        let selectionEnd = textarea.value.length;
+        const rememberSelection = () => {
+          selectionStart = textarea.selectionStart ?? textarea.value.length;
+          selectionEnd = textarea.selectionEnd ?? selectionStart;
+        };
+        for (const eventName of ["click", "keyup", "select", "input"]) {
+          textarea.addEventListener(eventName, rememberSelection);
+        }
+
+        // Keep the textarea's cursor position when the button is tapped.
+        button.addEventListener("pointerdown", event => event.preventDefault());
+        button.addEventListener("click", async () => {
+          const id = requestId();
+          try {
+            const clipboard = window.parent.navigator.clipboard;
+            if (!clipboard?.readText) {
+              throw new Error("Clipboard reading is unavailable");
+            }
+            const pastedText = await clipboard.readText();
+            const currentValue = textarea.value;
+            const nextValue =
+              currentValue.slice(0, selectionStart)
+              + pastedText
+              + currentValue.slice(selectionEnd);
+
+            // Show the result immediately; the component value then makes
+            // Streamlit's Python and browser state authoritative on rerun.
+            textarea.value = nextValue;
+            const nextCursor = selectionStart + pastedText.length;
+            textarea.setSelectionRange(nextCursor, nextCursor);
+            button.textContent = "✓ Pasted";
+            button.disabled = true;
+            setValue({ request_id: id, status: "success", value: nextValue });
+          } catch (error) {
+            setValue({
+              request_id: id,
+              status: "error",
+              message: error instanceof Error ? error.message : String(error),
+            });
+          }
+        });
+
+        wrapper.appendChild(button);
+        return true;
+      }
+
+      window.addEventListener("message", event => {
+        if (event.data?.type !== "streamlit:render") return;
+        const args = event.data.args || {};
+        observer?.disconnect();
+
+        if (!installButton(args)) {
+          observer = new MutationObserver(() => {
+            if (installButton(args)) observer.disconnect();
+          });
+          observer.observe(window.parent.document.body, {
+            childList: true,
+            subtree: true,
+          });
+        }
+        send("streamlit:setFrameHeight", { height: 0 });
+      });
+
+      send("streamlit:componentReady", { apiVersion: 1 });
+      send("streamlit:setFrameHeight", { height: 0 });
+    </script>
+  </head>
+  <body></body>
+</html>
