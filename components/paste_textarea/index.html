@@ -147,18 +147,40 @@
           event.preventDefault();
           event.stopPropagation();
         };
+        pasteButton.addEventListener("pointerdown", suppressTextSelection);
         for (const button of [tidyButton, pasteButton]) {
-          button.addEventListener("pointerdown", suppressTextSelection);
           button.addEventListener("contextmenu", suppressTextSelection);
         }
-        tidyButton.addEventListener("click", event => {
-          event.stopPropagation();
+
+        let tidyRequestedFromPointer = false;
+        const requestTidy = () => {
+          // Streamlit normally commits a text area when it loses focus. The
+          // injected button used to suppress that blur, so a just-pasted or
+          // just-typed value could still be only in the browser when the
+          // component triggered its rerun. Capture the value first, then blur
+          // so both the component request and Streamlit's widget state carry
+          // the same text to Python.
+          const currentValue = textarea.value;
+          textarea.blur();
           setValue({
             request_id: requestId(),
             action: "tidy",
             status: "requested",
-            value: textarea.value,
+            value: currentValue,
           });
+        };
+        tidyButton.addEventListener("pointerdown", event => {
+          event.preventDefault();
+          event.stopPropagation();
+          tidyRequestedFromPointer = true;
+          requestTidy();
+        });
+        tidyButton.addEventListener("click", event => {
+          event.preventDefault();
+          event.stopPropagation();
+          // Pointer activation is handled above, before a rerender can remove
+          // the injected button. Keep click as the keyboard-accessible path.
+          if (!tidyRequestedFromPointer) requestTidy();
         });
         pasteButton.addEventListener("click", async event => {
           event.stopPropagation();
