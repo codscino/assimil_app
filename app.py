@@ -1373,7 +1373,7 @@ if st.session_state.cards_data:
 
     for idx, card in enumerate(cards_list):
         with st.expander(
-            "Edit card · "
+            ":gray[Edit card ·] "
             + flashcard_summary(
                 card.get("fr_phrase", ""), card.get("fr_word", "")
             ),
