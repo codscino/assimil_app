@@ -33,9 +33,12 @@
 
         const wrapper = textarea.parentElement;
         const field = textarea.closest('[data-testid="stTextArea"]');
-        if (!wrapper || !field) return false;
+        const label = field?.querySelector("label");
+        if (!wrapper || !field || !label) return false;
         wrapper.style.position = "relative";
-        field.style.position = "relative";
+        field.style.position = "";
+        label.style.display = "flex";
+        label.style.alignItems = "center";
         textarea.style.paddingRight = "3rem";
 
         const textColor = window.parent.getComputedStyle(textarea).color;
@@ -89,12 +92,9 @@
         tidyButton.title = "Tidy notes with Gemini";
         tidyButton.style.cssText = `
           ${baseButtonStyles}
-          position: absolute;
-          top: 0;
-          right: 0.15rem;
-          z-index: 2;
           height: 1.5rem;
           padding: 0 0.2rem;
+          margin-left: 0.55rem;
         `;
         tidyButton.querySelector("svg").style.cssText = iconStyles;
 
@@ -179,7 +179,7 @@
           }
         });
 
-        field.appendChild(tidyButton);
+        label.appendChild(tidyButton);
         wrapper.appendChild(pasteButton);
         return true;
       }

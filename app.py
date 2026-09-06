@@ -937,6 +937,11 @@ st.markdown(
             gap: 3rem;
         }
     }
+    @media (min-width: 1024px) {
+        .st-key-notes-input-layout [data-testid="stHorizontalBlock"] {
+            gap: 20em;
+        }
+    }
     @media (max-width: 640px) {
         .stMain .block-container,
         [data-testid="stAppViewBlockContainer"],
