@@ -3,4 +3,3 @@ genanki
 google-genai
 pydantic
 speechify-api
-extra-streamlit-components==0.1.81

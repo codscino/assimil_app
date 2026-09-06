@@ -11,14 +11,13 @@ import hashlib
 import base64
 import tempfile
 import unicodedata
-from datetime import datetime, timedelta
 from pathlib import Path
 
-import extra_streamlit_components as stx
 import streamlit.components.v1 as components
 
 from draft_state import build_draft_json, restore_draft_json
 from flashcard_regeneration import build_regeneration_prompt
+from preferences_state import build_preferences_json, restore_preferences_json
 from speechify_audio import list_french_voices, synthesize_french_audio
 
 # -----------------------------------------------------------------------------
@@ -38,9 +37,7 @@ TARGET_LANGUAGES = {
     "ru": {"name": "Russian", "flag": "🇷🇺", "deck_code": "RU"},
     "nl": {"name": "Dutch", "flag": "🇳🇱", "deck_code": "NL"},
 }
-LANGUAGE_COOKIE = "assimil_target_language"
-NO_ASSIMIL_COOKIE = "assimil_no_assimil_mode"
-SPEECHIFY_VOICE_COOKIE = "assimil_speechify_voice_id"
+PREFERENCES_STORAGE_KEY = "assimil-preferences-v1"
 TARGET_WORDS_STORAGE_KEY = "assimil-target-words-v1"
 MAX_TARGET_WORDS_LENGTH = 100_000
 
@@ -867,27 +864,39 @@ def build_anki_apkg(
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Assimil Anki Generator", page_icon="🇫🇷", layout="wide")
 
-cookie_manager = stx.CookieManager(key="assimil_language_cookie_manager")
-saved_target_language = cookie_manager.get(LANGUAGE_COOKIE)
-saved_language_is_valid = saved_target_language in TARGET_LANGUAGES
-saved_no_assimil_cookie = cookie_manager.get(NO_ASSIMIL_COOKIE)
-saved_speechify_voice_id = cookie_manager.get(SPEECHIFY_VOICE_COOKIE)
-saved_no_assimil_mode = {
-    "1": True,
-    "0": False,
-    True: True,
-    False: False,
-}.get(saved_no_assimil_cookie)
+preferences_result = _draft_storage(
+    action="read",
+    draft=None,
+    storage_key=PREFERENCES_STORAGE_KEY,
+    structured_result=True,
+    key="assimil_preferences_reader",
+    default={"status": "loading", "value": None},
+)
+if preferences_result.get("status") == "loading":
+    st.caption("Loading saved preferences…")
+    st.stop()
+if preferences_result.get("status") == "error":
+    st.warning(
+        "Browser storage is unavailable, so preferences will only last for this session."
+    )
 
-# Cookie components report their browser value after their first render. Apply
-# it on the following rerun, before the selectbox widget is instantiated.
+saved_preferences = restore_preferences_json(
+    preferences_result.get("value"), TARGET_LANGUAGES
+) or {}
+saved_target_language = saved_preferences.get("target_language")
+saved_language_is_valid = saved_target_language in TARGET_LANGUAGES
+saved_no_assimil_mode = saved_preferences.get("no_assimil_mode")
+saved_speechify_voice_id = saved_preferences.get("speechify_voice_id")
+
+
+def mark_preferences_changed():
+    """Write preferences only after a real widget interaction."""
+    st.session_state.preferences_dirty = True
+
 if "target_language" not in st.session_state:
     st.session_state.target_language = (
         saved_target_language if saved_language_is_valid else "en"
     )
-if saved_language_is_valid and not st.session_state.get("language_cookie_applied"):
-    st.session_state.target_language = saved_target_language
-    st.session_state.language_cookie_applied = True
 
 header_col1, header_col_language, header_col_model = st.columns([3, 1.15, 1.15])
 
@@ -899,6 +908,7 @@ with header_col_language:
         "Translate to",
         options=list(TARGET_LANGUAGES),
         key="target_language",
+        on_change=mark_preferences_changed,
         format_func=lambda code: (
             f"{TARGET_LANGUAGES[code]['flag']} {TARGET_LANGUAGES[code]['name']}"
         ),
@@ -913,20 +923,6 @@ with header_col_model:
 
 target_language = TARGET_LANGUAGES[target_language_code]
 target_language_name = target_language["name"]
-
-cookie_value = st.session_state.get(
-    "persisted_target_language",
-    saved_target_language if saved_language_is_valid else "en",
-)
-if target_language_code != cookie_value:
-    cookie_manager.set(
-        LANGUAGE_COOKIE,
-        target_language_code,
-        key=f"save_target_language_{target_language_code}",
-        expires_at=datetime.now() + timedelta(days=365),
-    )
-    st.session_state.persisted_target_language = target_language_code
-    st.session_state.language_cookie_applied = True
 
 # Existing translations cannot safely be relabelled as another language.
 previous_language = st.session_state.get("cards_target_language", target_language_code)
@@ -955,15 +951,9 @@ if "cards_data" not in st.session_state:
 if "no_assimil_mode" not in st.session_state:
     st.session_state.no_assimil_mode = (
         saved_no_assimil_mode
-        if saved_no_assimil_mode is not None
+        if isinstance(saved_no_assimil_mode, bool)
         else not bool(lesson_numbers)
     )
-if (
-    saved_no_assimil_mode is not None
-    and not st.session_state.get("no_assimil_cookie_applied")
-):
-    st.session_state.no_assimil_mode = saved_no_assimil_mode
-    st.session_state.no_assimil_cookie_applied = True
 if lesson_numbers and (
     "selected_lesson" not in st.session_state
     or st.session_state.selected_lesson not in lessons
@@ -1068,6 +1058,11 @@ def clear_voice_preview():
     st.session_state.pop("speechify_preview_audio", None)
 
 
+def mark_voice_preferences_changed():
+    clear_voice_preview()
+    mark_preferences_changed()
+
+
 def mark_target_words_changed():
     """Allow writes after the user, rather than initial rendering, changed input."""
     st.session_state.target_words_storage_applied = True
@@ -1080,6 +1075,7 @@ with c1:
     no_assimil_mode = st.toggle(
         "No Assimil",
         key="no_assimil_mode",
+        on_change=mark_preferences_changed,
         help="Create free-practice phrases not linked to Assimil book lessons.",
     )
     if no_assimil_mode != st.session_state.last_no_assimil_mode:
@@ -1091,20 +1087,6 @@ with c1:
         st.session_state.shared_tag = new_tag
         st.session_state.shared_tag_editor = new_tag
         st.session_state.last_no_assimil_mode = no_assimil_mode
-
-    persisted_no_assimil_mode = st.session_state.get(
-        "persisted_no_assimil_mode",
-        saved_no_assimil_mode,
-    )
-    if no_assimil_mode != persisted_no_assimil_mode:
-        cookie_manager.set(
-            NO_ASSIMIL_COOKIE,
-            "1" if no_assimil_mode else "0",
-            key=f"save_no_assimil_mode_{int(no_assimil_mode)}",
-            expires_at=datetime.now() + timedelta(days=365),
-        )
-        st.session_state.persisted_no_assimil_mode = no_assimil_mode
-        st.session_state.no_assimil_cookie_applied = True
 
     if lesson_numbers:
         selected_lesson_number = st.select_slider(
@@ -1376,11 +1358,8 @@ if st.session_state.cards_data:
             voice_ids = [voice["id"] for voice in speechify_voices]
             configured_voice_id = st.secrets.get("SPEECHIFY_VOICE_ID", "")
             saved_voice_is_valid = saved_speechify_voice_id in voice_ids
-            if saved_voice_is_valid and not st.session_state.get(
-                "speechify_voice_cookie_applied"
-            ):
+            if "speechify_voice_id" not in st.session_state and saved_voice_is_valid:
                 st.session_state.speechify_voice_id = saved_speechify_voice_id
-                st.session_state.speechify_voice_cookie_applied = True
             elif st.session_state.get("speechify_voice_id") not in voice_ids:
                 # A saved voice may no longer be available for the API key.
                 st.session_state.pop("speechify_voice_id", None)
@@ -1413,20 +1392,8 @@ if st.session_state.cards_data:
                         "Audio is generated at 0.7× speed."
                     ),
                     key="speechify_voice_id",
-                    on_change=clear_voice_preview,
+                    on_change=mark_voice_preferences_changed,
                 )
-                persisted_voice_id = st.session_state.get(
-                    "persisted_speechify_voice_id", saved_speechify_voice_id
-                )
-                if selected_voice_id != persisted_voice_id:
-                    cookie_manager.set(
-                        SPEECHIFY_VOICE_COOKIE,
-                        selected_voice_id,
-                        key=f"save_speechify_voice_{selected_voice_id}",
-                        expires_at=datetime.now() + timedelta(days=365),
-                    )
-                    st.session_state.persisted_speechify_voice_id = selected_voice_id
-                    st.session_state.speechify_voice_cookie_applied = True
                 if st.button("▶ Preview selected voice", use_container_width=True):
                     if not preview_phrase:
                         st.warning("The first flashcard needs a French phrase to preview.")
@@ -1498,7 +1465,7 @@ if st.session_state.cards_data:
                     st.session_state.apkg_auto_download_signature = export_signature
                     # The generated package remains available for the automatic
                     # download, while all disposable browser draft data is reset.
-                    # Language and No Assimil are separate durable cookies.
+                    # Preferences live separately from disposable draft data.
                     st.session_state.cleanup_after_successful_export = True
                     clear_browser_draft = True
                     clear_target_words = True
@@ -1540,8 +1507,22 @@ if st.session_state.cards_data:
                     )
                     st.session_state.pop("apkg_auto_download_signature", None)
 
-# Write only card data and ordinary strings to localStorage. API keys, audio,
-# and the prepared package deliberately remain server-side.
+# Write only preferences, card data, and ordinary strings to localStorage. API
+# keys, audio, and the prepared package deliberately remain server-side.
+if st.session_state.pop("preferences_dirty", False):
+    preferences_json = build_preferences_json(
+        target_language_code,
+        st.session_state.no_assimil_mode,
+        st.session_state.get("speechify_voice_id", saved_speechify_voice_id),
+    )
+    _draft_storage(
+        action="write",
+        draft=preferences_json,
+        storage_key=PREFERENCES_STORAGE_KEY,
+        key="assimil_preferences_writer",
+        default=None,
+    )
+
 browser_draft = build_draft_json(
     st.session_state.cards_data,
     st.session_state.card_regeneration_baselines,

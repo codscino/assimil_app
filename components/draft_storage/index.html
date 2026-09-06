@@ -5,7 +5,7 @@
     <script>
       const DEFAULT_STORAGE_KEY = "assimil-flashcard-draft-v1";
       let hasSentValue = false;
-      let lastSentValue;
+      let lastSentSignature;
 
       function send(type, data = {}) {
         window.parent.postMessage(
@@ -15,9 +15,10 @@
       }
 
       function setValue(value) {
-        if (hasSentValue && value === lastSentValue) return;
+        const signature = JSON.stringify(value);
+        if (hasSentValue && signature === lastSentSignature) return;
         hasSentValue = true;
-        lastSentValue = value;
+        lastSentSignature = signature;
         send("streamlit:setComponentValue", { value });
       }
 
@@ -26,6 +27,21 @@
           return localStorage.getItem(key);
         } catch (_) {
           return null;
+        }
+      }
+
+      function readStorageResult(key) {
+        try {
+          return {
+            status: "ready",
+            value: localStorage.getItem(key),
+          };
+        } catch (error) {
+          return {
+            status: "error",
+            value: null,
+            message: error instanceof Error ? error.message : String(error),
+          };
         }
       }
 
@@ -56,7 +72,11 @@
           // Python here would cause an unnecessary app rerun after every edit.
           writeStorage(storageKey, args.draft);
         } else if (args.action === "read") {
-          setValue(readStorage(storageKey));
+          setValue(
+            args.structured_result
+              ? readStorageResult(storageKey)
+              : readStorage(storageKey)
+          );
         }
         send("streamlit:setFrameHeight", { height: 0 });
       });
