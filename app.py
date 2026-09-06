@@ -869,6 +869,11 @@ st.set_page_config(page_title="Anki Generator", page_icon="🇫🇷", layout="wi
 st.markdown(
     """
     <style>
+    .stMain .block-container,
+    [data-testid="stAppViewBlockContainer"],
+    [data-testid="stMainBlockContainer"] {
+        padding-bottom: 2rem;
+    }
     @media (max-width: 640px) {
         .stMain .block-container,
         [data-testid="stAppViewBlockContainer"],
@@ -927,7 +932,7 @@ with st.container(key="app_header"):
     header_col1, header_col_language, header_col_model = st.columns([3, 1.15, 1.15])
 
     with header_col1:
-        st.title("Anki Generator")
+        st.title("🇫🇷 Anki Generator", anchor=False)
 
     with header_col_language:
         target_language_code = st.selectbox(
@@ -1094,7 +1099,7 @@ def mark_target_words_changed():
     st.session_state.target_words_storage_applied = True
 
 # --- STEP 1: INPUT FORM ---
-st.subheader("1. Write your notes")
+st.subheader("1. Write your notes", anchor=False)
 c1, c2 = st.columns([1, 2])
 
 with c1:
@@ -1140,7 +1145,6 @@ with c1:
     if no_assimil_mode:
         selected_lesson = "French Practice"
         lesson_data = None
-        st.caption("Free practice: Gemini will invent a useful French-learning phrase.")
     else:
         lesson_data = lessons[selected_lesson]
 
@@ -1148,7 +1152,7 @@ with c2:
     st.markdown("""
     **Enter target words/phrases (one per line):**<br>
     Add extra notes in parentheses `()`.<br>
-    *Example:* `comment allez vous (formal way to ask how someone is)`
+    *Example:* `comment allez vous (formal way)`
     """, unsafe_allow_html=True)
     user_input = st.text_area(
         "Target Words",
@@ -1229,7 +1233,7 @@ if st.session_state.cards_data:
         ]
 
     st.divider()
-    st.subheader("2. Review & Edit Cards")
+    st.subheader("2. Review & Edit Cards", anchor=False)
     st.caption(
         "Cards start collapsed. Select Edit card to edit or regenerate it; edits save automatically."
     )
@@ -1358,7 +1362,7 @@ if st.session_state.cards_data:
 
     # --- STEP 3: APPROVE & DOWNLOAD ---
     st.divider()
-    st.subheader("3. Export Deck")
+    st.subheader("3. Export Deck", anchor=False)
 
     save_all_card_widgets(all_widget_keys)
     speechify_api_key = st.secrets.get("SPEECHIFY_API_KEY", "")
