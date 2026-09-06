@@ -48,7 +48,7 @@ try {
   await page
     .frameLocator('iframe[title="streamlitApp"]')
     .locator("h1")
-    .filter({ hasText: /Assimil French Anki Generator/ })
+    .filter({ hasText: /Anki Generator/ })
     .first()
     .waitFor({
       state: "visible",
