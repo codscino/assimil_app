@@ -14,17 +14,17 @@ import unicodedata
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import requests
 import extra_streamlit_components as stx
 import streamlit.components.v1 as components
 
 from draft_state import build_draft_json, restore_draft_json
 from flashcard_regeneration import build_regeneration_prompt
+from speechify_audio import list_french_voices, synthesize_french_audio
 
 # -----------------------------------------------------------------------------
 # 1. ANKI MODEL DEFINITION (Raw Strings)
 # -----------------------------------------------------------------------------
-# Changed because the model now has an embedded ElevenLabs audio field.
+# Changed because the model now has an embedded French audio field.
 MODEL_ID = 1607392320
 FR2EN_DECK_ID = 2059500001
 EN2FR_DECK_ID = 2059500002
@@ -780,44 +780,16 @@ class DirectionalDeck(genanki.Deck):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def list_elevenlabs_voices(elevenlabs_api_key):
-    """Return the voices available to the account, cached for one hour."""
-    response = requests.get(
-        "https://api.elevenlabs.io/v1/voices",
-        headers={"xi-api-key": elevenlabs_api_key},
-        timeout=20,
-    )
-    response.raise_for_status()
-    return response.json().get("voices", [])
-
-
-def synthesize_french_audio(elevenlabs_api_key, voice_id, text):
-    """Generate an Anki-friendly MP3 using a multilingual French request."""
-    response = requests.post(
-        f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
-        params={"output_format": "mp3_44100_128"},
-        headers={
-            "xi-api-key": elevenlabs_api_key,
-            "Content-Type": "application/json",
-        },
-        json={
-            "text": text,
-            "model_id": "eleven_multilingual_v2",
-            "language_code": "fr",
-            # ElevenLabs supports 0.7–1.2; 0.7 is its slowest supported pace.
-            "voice_settings": {"speed": 0.7},
-        },
-        timeout=60,
-    )
-    response.raise_for_status()
-    return response.content
+def cached_french_voices(_speechify_api_key):
+    """Return compatible Speechify voices, cached for one hour."""
+    return list_french_voices(_speechify_api_key)
 
 
 def build_anki_apkg(
     cards_data,
     lesson_name,
-    elevenlabs_api_key,
-    elevenlabs_voice_id,
+    speechify_api_key,
+    speechify_voice_id,
     shared_tag=None,
     target_language_code="en",
 ):
@@ -861,7 +833,7 @@ def build_anki_apkg(
                 if filename not in generated_audio:
                     audio_path.write_bytes(
                         synthesize_french_audio(
-                            elevenlabs_api_key, elevenlabs_voice_id, french_text
+                            speechify_api_key, speechify_voice_id, french_text
                         )
                     )
                     generated_audio[filename] = audio_path
@@ -1091,7 +1063,7 @@ def save_all_card_widgets(all_widget_keys):
 
 
 def clear_voice_preview():
-    st.session_state.pop("elevenlabs_preview_audio", None)
+    st.session_state.pop("speechify_preview_audio", None)
 
 
 def mark_target_words_changed():
@@ -1106,7 +1078,7 @@ with c1:
     no_assimil_mode = st.toggle(
         "No Assimil",
         key="no_assimil_mode",
-        help="Create free-practice phrases without using lessons.json as a reference.",
+        help="Create free-practice phrases not linked to Assimil book lessons.",
     )
     if no_assimil_mode != st.session_state.last_no_assimil_mode:
         new_tag = (
@@ -1379,61 +1351,65 @@ if st.session_state.cards_data:
     st.subheader("3. Export Deck")
 
     save_all_card_widgets(all_widget_keys)
-    elevenlabs_api_key = st.secrets.get("ELEVENLABS_API_KEY", "")
+    speechify_api_key = st.secrets.get("SPEECHIFY_API_KEY", "")
 
-    if not elevenlabs_api_key:
+    if not speechify_api_key:
         st.error(
-            "Add ELEVENLABS_API_KEY to .streamlit/secrets.toml before exporting "
+            "Add SPEECHIFY_API_KEY to .streamlit/secrets.toml before exporting "
             "a deck with French audio."
         )
     else:
         try:
-            elevenlabs_voices = list_elevenlabs_voices(elevenlabs_api_key)
-        except requests.RequestException as error:
-            elevenlabs_voices = []
-            st.error(f"Could not load ElevenLabs voices: {error}")
+            speechify_voices = cached_french_voices(speechify_api_key)
+        except Exception as error:
+            speechify_voices = []
+            st.error(f"Could not load Speechify voices: {error}")
 
-        if not elevenlabs_voices:
-            st.warning("No ElevenLabs voices are available for this API key.")
+        if not speechify_voices:
+            st.warning(
+                "No French Speechify voices compatible with Simba 3 are available "
+                "for this API key."
+            )
         else:
-            voice_ids = [voice["voice_id"] for voice in elevenlabs_voices]
-            configured_voice_id = st.secrets.get("ELEVENLABS_VOICE_ID", "")
+            voice_ids = [voice["id"] for voice in speechify_voices]
+            configured_voice_id = st.secrets.get("SPEECHIFY_VOICE_ID", "")
             default_voice_index = (
                 voice_ids.index(configured_voice_id)
                 if configured_voice_id in voice_ids
                 else 0
             )
-            voice_by_id = {voice["voice_id"]: voice for voice in elevenlabs_voices}
+            voice_by_id = {voice["id"]: voice for voice in speechify_voices}
 
             # Keep voice choice/preview before the export action, at half width.
             voice_col, _ = st.columns(2)
             with voice_col:
                 selected_voice_id = st.selectbox(
-                    "French ElevenLabs voice",
+                    "French Speechify voice",
                     options=voice_ids,
                     index=default_voice_index,
                     format_func=lambda voice_id: (
-                        f"{voice_by_id[voice_id].get('name', 'Unnamed voice')} "
-                        f"({voice_by_id[voice_id].get('category', 'voice')})"
+                        f"{voice_by_id[voice_id]['display_name']} "
+                        f"({voice_by_id[voice_id]['locale']}, "
+                        f"{voice_by_id[voice_id]['gender']})"
                     ),
                     help=(
-                        "Choose a voice trained for French or with a French accent "
-                        "for the most natural pronunciation."
+                        "Only voices compatible with French on Simba 3 are shown. "
+                        "Audio is generated at 0.7× speed."
                     ),
-                    key="elevenlabs_voice_id",
+                    key="speechify_voice_id",
                     on_change=clear_voice_preview,
                 )
                 if st.button("▶ Preview selected voice", use_container_width=True):
                     try:
-                        st.session_state.elevenlabs_preview_audio = synthesize_french_audio(
-                            elevenlabs_api_key,
+                        st.session_state.speechify_preview_audio = synthesize_french_audio(
+                            speechify_api_key,
                             selected_voice_id,
                             "Bonjour ! Voici un exemple de prononciation française.",
                         )
-                    except requests.RequestException as error:
+                    except Exception as error:
                         st.error(f"Could not generate voice preview: {error}")
 
-                if preview_audio := st.session_state.get("elevenlabs_preview_audio"):
+                if preview_audio := st.session_state.get("speechify_preview_audio"):
                     st.audio(preview_audio, format="audio/mpeg")
 
             cards_for_export = [dict(card) for card in st.session_state.cards_data]
@@ -1480,7 +1456,7 @@ if st.session_state.cards_data:
                         st.session_state.prepared_apkg = build_anki_apkg(
                             cards_for_export,
                             lesson_for_export,
-                            elevenlabs_api_key,
+                            speechify_api_key,
                             voice_for_export,
                             shared_tag=tag_for_export,
                             target_language_code=target_language_code,

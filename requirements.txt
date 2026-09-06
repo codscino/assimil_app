@@ -2,5 +2,5 @@ streamlit==1.59.0
 genanki
 google-genai
 pydantic
-requests
+speechify-api
 extra-streamlit-components==0.1.81
