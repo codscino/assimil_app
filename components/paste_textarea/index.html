@@ -32,32 +32,50 @@
         const wrapper = textarea.parentElement;
         if (!wrapper) return false;
         wrapper.style.position = "relative";
-        textarea.style.paddingRight = "5.5rem";
+        textarea.style.paddingRight = "3rem";
 
         const button = appDocument.createElement("button");
         button.id = BUTTON_ID;
         button.type = "button";
-        button.textContent = `📋 ${args.button_label || "Paste"}`;
+        button.innerHTML = `
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <rect x="6" y="5" width="12" height="16" rx="2"></rect>
+            <path d="M9 5.5V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1.5"></path>
+            <path d="M9 10h6M9 14h6M9 18h4"></path>
+          </svg>
+        `;
         button.setAttribute("aria-label", "Paste clipboard text into Target Words");
         button.title = "Paste from clipboard";
         button.style.cssText = `
           position: absolute;
-          top: 0.45rem;
-          right: 0.45rem;
+          top: 0.4rem;
+          right: 0.4rem;
           z-index: 2;
-          min-height: 2.5rem;
-          padding: 0.35rem 0.65rem;
-          border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
-          border-radius: 0.5rem;
-          background: var(--secondary-background-color, #f0f2f6);
-          color: var(--text-color, #31333f);
-          font: inherit;
-          font-size: 0.875rem;
-          font-weight: 600;
-          line-height: 1;
+          display: grid;
+          width: 2rem;
+          height: 2rem;
+          padding: 0;
+          place-items: center;
+          border: 0;
+          border-radius: 0.35rem;
+          background: transparent;
+          color: #fff;
           cursor: pointer;
           touch-action: manipulation;
+          user-select: none;
+          -webkit-user-select: none;
+          -webkit-touch-callout: none;
           -webkit-tap-highlight-color: transparent;
+        `;
+        const icon = button.querySelector("svg");
+        icon.style.cssText = `
+          display: block;
+          fill: none;
+          stroke: currentColor;
+          stroke-width: 1.7;
+          stroke-linecap: round;
+          stroke-linejoin: round;
+          pointer-events: none;
         `;
 
         let selectionStart = textarea.value.length;
@@ -70,8 +88,14 @@
           textarea.addEventListener(eventName, rememberSelection);
         }
 
-        // Keep the textarea's cursor position when the button is tapped.
-        button.addEventListener("pointerdown", event => event.preventDefault());
+        // Keep the textarea's cursor position and suppress iOS's ordinary
+        // text-selection callout when the icon itself is tapped.
+        const suppressTextSelection = event => {
+          event.preventDefault();
+          event.stopPropagation();
+        };
+        button.addEventListener("pointerdown", suppressTextSelection);
+        button.addEventListener("contextmenu", suppressTextSelection);
         button.addEventListener("click", async () => {
           const id = requestId();
           try {
@@ -91,8 +115,6 @@
             textarea.value = nextValue;
             const nextCursor = selectionStart + pastedText.length;
             textarea.setSelectionRange(nextCursor, nextCursor);
-            button.textContent = "✓ Pasted";
-            button.disabled = true;
             setValue({ request_id: id, status: "success", value: nextValue });
           } catch (error) {
             setValue({

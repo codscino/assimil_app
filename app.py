@@ -1160,7 +1160,6 @@ with c2:
     """, unsafe_allow_html=True)
     paste_result = _paste_textarea(
         textarea_label="Target Words",
-        button_label="Paste",
         key="target_words_paste_button",
         default=None,
     )
@@ -1180,7 +1179,6 @@ with c2:
                 ):
                     st.session_state.target_words = pasted_value
                     st.session_state.target_words_storage_applied = True
-                    st.toast("Pasted from clipboard.", icon="📋")
                 else:
                     st.toast("That clipboard text is too long to paste.", icon="⚠️")
             else:
