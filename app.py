@@ -40,6 +40,7 @@ TARGET_LANGUAGES = {
 }
 LANGUAGE_COOKIE = "assimil_target_language"
 NO_ASSIMIL_COOKIE = "assimil_no_assimil_mode"
+SPEECHIFY_VOICE_COOKIE = "assimil_speechify_voice_id"
 TARGET_WORDS_STORAGE_KEY = "assimil-target-words-v1"
 MAX_TARGET_WORDS_LENGTH = 100_000
 
@@ -870,6 +871,7 @@ cookie_manager = stx.CookieManager(key="assimil_language_cookie_manager")
 saved_target_language = cookie_manager.get(LANGUAGE_COOKIE)
 saved_language_is_valid = saved_target_language in TARGET_LANGUAGES
 saved_no_assimil_cookie = cookie_manager.get(NO_ASSIMIL_COOKIE)
+saved_speechify_voice_id = cookie_manager.get(SPEECHIFY_VOICE_COOKIE)
 saved_no_assimil_mode = {
     "1": True,
     "0": False,
@@ -1373,18 +1375,32 @@ if st.session_state.cards_data:
         else:
             voice_ids = [voice["id"] for voice in speechify_voices]
             configured_voice_id = st.secrets.get("SPEECHIFY_VOICE_ID", "")
+            saved_voice_is_valid = saved_speechify_voice_id in voice_ids
+            if saved_voice_is_valid and not st.session_state.get(
+                "speechify_voice_cookie_applied"
+            ):
+                st.session_state.speechify_voice_id = saved_speechify_voice_id
+                st.session_state.speechify_voice_cookie_applied = True
+            elif st.session_state.get("speechify_voice_id") not in voice_ids:
+                # A saved voice may no longer be available for the API key.
+                st.session_state.pop("speechify_voice_id", None)
             default_voice_index = (
                 voice_ids.index(configured_voice_id)
                 if configured_voice_id in voice_ids
                 else 0
             )
             voice_by_id = {voice["id"]: voice for voice in speechify_voices}
+            preview_phrase = (
+                st.session_state.cards_data[0].get("fr_phrase", "").strip()
+                if st.session_state.cards_data
+                else ""
+            )
 
             # Keep voice choice/preview before the export action, at half width.
             voice_col, _ = st.columns(2)
             with voice_col:
                 selected_voice_id = st.selectbox(
-                    "French Speechify voice",
+                    "Select French voice",
                     options=voice_ids,
                     index=default_voice_index,
                     format_func=lambda voice_id: (
@@ -1399,15 +1415,30 @@ if st.session_state.cards_data:
                     key="speechify_voice_id",
                     on_change=clear_voice_preview,
                 )
+                persisted_voice_id = st.session_state.get(
+                    "persisted_speechify_voice_id", saved_speechify_voice_id
+                )
+                if selected_voice_id != persisted_voice_id:
+                    cookie_manager.set(
+                        SPEECHIFY_VOICE_COOKIE,
+                        selected_voice_id,
+                        key=f"save_speechify_voice_{selected_voice_id}",
+                        expires_at=datetime.now() + timedelta(days=365),
+                    )
+                    st.session_state.persisted_speechify_voice_id = selected_voice_id
+                    st.session_state.speechify_voice_cookie_applied = True
                 if st.button("▶ Preview selected voice", use_container_width=True):
-                    try:
-                        st.session_state.speechify_preview_audio = synthesize_french_audio(
-                            speechify_api_key,
-                            selected_voice_id,
-                            "Bonjour ! Voici un exemple de prononciation française.",
-                        )
-                    except Exception as error:
-                        st.error(f"Could not generate voice preview: {error}")
+                    if not preview_phrase:
+                        st.warning("The first flashcard needs a French phrase to preview.")
+                    else:
+                        try:
+                            st.session_state.speechify_preview_audio = synthesize_french_audio(
+                                speechify_api_key,
+                                selected_voice_id,
+                                preview_phrase,
+                            )
+                        except Exception as error:
+                            st.error(f"Could not generate voice preview: {error}")
 
                 if preview_audio := st.session_state.get("speechify_preview_audio"):
                     st.audio(preview_audio, format="audio/mpeg")
