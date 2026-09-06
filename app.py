@@ -932,15 +932,23 @@ st.markdown(
     [data-testid="stMainBlockContainer"] {
         padding-bottom: 2rem;
     }
-    @media (min-width: 641px) {
-        .st-key-notes-input-layout [data-testid="stHorizontalBlock"] {
-            gap: 3rem;
-        }
+    .st-key-generate_initial_flashcards button,
+    .st-key-generate-initial-flashcards button {
+        border: 0 !important;
+        background: linear-gradient(
+            110deg,
+            #4285f4 0%,
+            #8b5cf6 34%,
+            #d946ef 62%,
+            #f97316 100%
+        ) !important;
+        color: #fff !important;
+        box-shadow: 0 0.2rem 0.65rem rgba(139, 92, 246, 0.24);
     }
-    @media (min-width: 1024px) {
-        .st-key-notes-input-layout [data-testid="stHorizontalBlock"] {
-            gap: 20em;
-        }
+    .st-key-generate_initial_flashcards button:hover,
+    .st-key-generate-initial-flashcards button:hover {
+        color: #fff !important;
+        filter: brightness(1.06);
     }
     @media (max-width: 640px) {
         .stMain .block-container,
@@ -1169,7 +1177,7 @@ def mark_target_words_changed():
 # --- STEP 1: INPUT FORM ---
 st.subheader("1. Write your notes", anchor=False)
 with st.container(key="notes_input_layout"):
-    c1, c2 = st.columns([1, 2])
+    c1, _, c2 = st.columns([1, 0.4, 2])
 
 with c1:
     no_assimil_mode = st.toggle(
@@ -1276,7 +1284,11 @@ with c2:
         on_change=mark_target_words_changed,
     )
 
-if st.button("✨ Generate Initial Flashcards", type="primary"):
+if st.button(
+    "✨ Generate Initial Flashcards",
+    type="primary",
+    key="generate_initial_flashcards",
+):
     if not api_key:
         st.error("Please provide a Gemini API Key.")
     elif not user_input.strip():

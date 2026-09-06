@@ -92,9 +92,20 @@
         tidyButton.title = "Tidy notes with Gemini";
         tidyButton.style.cssText = `
           ${baseButtonStyles}
-          height: 1.5rem;
-          padding: 0 0.2rem;
-          margin-left: 0.55rem;
+          height: 1.65rem;
+          padding: 0 0.5rem;
+          margin-left: 0.65rem;
+          border-radius: 0.45rem;
+          background: linear-gradient(
+            110deg,
+            #4285f4 0%,
+            #8b5cf6 34%,
+            #d946ef 62%,
+            #f97316 100%
+          );
+          color: #fff;
+          font-weight: 600;
+          box-shadow: 0 0.15rem 0.45rem rgba(139, 92, 246, 0.22);
         `;
         tidyButton.querySelector("svg").style.cssText = iconStyles;
 
