@@ -927,6 +927,13 @@ st.markdown(
     .st-key-notes-input-layout {
         margin-top: -0.2rem;
     }
+    /* Zero-height browser-storage components between the header and Step 1
+       still receive Streamlit's root flex spacing. Compensate at the heading
+       only when the optional API-key field is not occupying that space. */
+    .st-key-input_step_heading_compact,
+    .st-key-input-step-heading-compact {
+        margin-top: -4.5rem;
+    }
     .st-key-notes_input_layout [data-testid="stHorizontalBlock"],
     .st-key-notes-input-layout [data-testid="stHorizontalBlock"] {
         gap: 1rem;
@@ -965,18 +972,20 @@ st.markdown(
         }
         .st-key-app_header [data-testid="stHorizontalBlock"],
         .st-key-app-header [data-testid="stHorizontalBlock"] {
-            flex-flow: row wrap !important;
-            gap: 0.35rem 0.65rem;
+            align-items: stretch;
+            flex-direction: column !important;
+            flex-wrap: nowrap !important;
+            gap: 0.45rem;
         }
         .st-key-app_header [data-testid="stColumn"],
         .st-key-app-header [data-testid="stColumn"] {
-            width: calc(50% - 0.325rem) !important;
-            flex: 1 1 calc(50% - 0.325rem) !important;
+            width: 100% !important;
+            min-width: 100% !important;
+            flex: 1 1 auto !important;
         }
         .st-key-app_header [data-testid="stColumn"]:first-child,
         .st-key-app-header [data-testid="stColumn"]:first-child {
-            width: 100% !important;
-            flex-basis: 100% !important;
+            margin-bottom: 0.35rem;
         }
         .st-key-app_header h1,
         .st-key-app-header h1 {
@@ -1210,7 +1219,11 @@ def mark_target_words_changed():
     st.session_state.target_words_storage_applied = True
 
 # --- STEP 1: INPUT FORM ---
-st.subheader("1. Write your notes", anchor=False)
+input_step_heading_key = (
+    "input_step_heading_compact" if api_key else "input_step_heading"
+)
+with st.container(key=input_step_heading_key):
+    st.subheader("1. Write your notes", anchor=False)
 with st.container(key="notes_input_layout"):
     c1, _, c2 = st.columns([1, 0.16, 2.4])
 
