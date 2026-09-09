@@ -1606,15 +1606,15 @@ if st.session_state.cards_data:
             + " ".join(export_validation_errors)
         )
         if st.button(
-            "✨ Fix phrase errors with Gemini",
+            "✨ Fix phrase errors",
             disabled=not bool(api_key),
             help=(
-                "Wrong markers are moved locally first. Gemini then gets one semantic "
-                "repair pass, and the app validates every card again."
+                "Wrong markers are moved first. Remaining phrase errors get one "
+                "repair pass, and every card is validated again."
             ),
         ):
             try:
-                with st.spinner("Gemini is repairing and rechecking the phrases..."):
+                with st.spinner("Repairing and rechecking the phrases..."):
                     repair_client = genai.Client(api_key=api_key)
                     repaired_cards, remaining_errors = repair_card_highlights_once(
                         repair_client,
@@ -1633,15 +1633,15 @@ if st.session_state.cards_data:
                 st.session_state.highlight_repair_result = {
                     "success": not remaining_errors,
                     "message": (
-                        "Gemini fixed the phrase errors and export is unlocked."
+                        "✨ Phrase errors fixed. Export is unlocked."
                         if not remaining_errors
-                        else "Gemini repaired the cards once, but some errors remain: "
+                        else "Some phrase errors remain after one repair attempt: "
                         + " ".join(remaining_errors)
                     ),
                 }
                 st.rerun()
             except Exception as error:
-                st.error(f"Gemini could not repair the phrase errors: {error}")
+                st.error(f"Could not repair the phrase errors: {error}")
 
     speechify_api_key = st.secrets.get("SPEECHIFY_API_KEY", "")
 

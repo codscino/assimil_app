@@ -34,6 +34,26 @@ class HighlightMarkupTests(unittest.TestCase):
             "&Le& chat est sur la table",
         )
 
+    def test_incomplete_marker_is_replaced_with_one_clean_pair(self):
+        self.assertEqual(
+            ensure_target_marker("Buongiorno&", "Buongiorno"),
+            "&Buongiorno&",
+        )
+        self.assertEqual(
+            ensure_target_marker("&Buongiorno", "Buongiorno"),
+            "&Buongiorno&",
+        )
+
+    def test_surplus_marker_is_not_accepted_as_valid(self):
+        phrase = "&Buongiorno&&"
+
+        self.assertFalse(marker_matches_target(phrase, "Buongiorno"))
+        self.assertIn("ampersands", phrase_highlight_error(phrase, "Buongiorno"))
+        self.assertEqual(
+            ensure_target_marker(phrase, "Buongiorno"),
+            "&Buongiorno&",
+        )
+
     def test_existing_explicit_marker_is_not_silently_replaced(self):
         phrase = "Le &chat& est sur la table"
 

@@ -53,9 +53,10 @@ def phrase_contains_target(phrase, target):
 
 
 def marker_matches_target(phrase, target):
-    """Check that at least one explicit marker contains the target text."""
+    """Check that one well-formed marker pair contains the target text."""
+    phrase = phrase or ""
     normalized_target = normalize_for_containment(target)
-    return bool(normalized_target) and any(
+    return phrase.count("&") == 2 and bool(normalized_target) and any(
         normalize_for_containment(marked_text) == normalized_target
         for marked_text in highlighted_texts(phrase)
     )
@@ -87,6 +88,13 @@ def ensure_target_marker(phrase, target):
     validate it and ask the user to correct a mismatched explicit selection.
     """
     phrase = phrase or ""
+
+    # A user may delete only one side of an existing marker. Remove incomplete
+    # or surplus delimiters before adding a fresh pair; otherwise text such as
+    # ``Buongiorno&`` would become ``&Buongiorno&&``.
+    if phrase.count("&") not in (0, 2):
+        phrase = phrase.replace("&", "")
+
     if highlighted_texts(phrase) or not target:
         return phrase
 
