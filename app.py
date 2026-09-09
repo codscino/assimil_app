@@ -895,15 +895,49 @@ def build_anki_apkg(
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Anki Generator", page_icon="🇫🇷", layout="wide")
 
-# Keep the mobile header compact: Streamlit's default page gutter and wrapped
-# columns otherwise leave a large empty area before the first form section.
+# Streamlit reserves generous dashboard-style gutters by default. This app's
+# first step is intentionally denser so the complete input flow remains visible
+# without scrolling on a typical laptop or iPhone 15 viewport.
 st.markdown(
     """
     <style>
     .stMain .block-container,
     [data-testid="stAppViewBlockContainer"],
     [data-testid="stMainBlockContainer"] {
-        padding-bottom: 2rem;
+        max-width: 74rem;
+        padding: 0.75rem 2rem 2rem;
+    }
+    .st-key-app_header [data-testid="stHorizontalBlock"],
+    .st-key-app-header [data-testid="stHorizontalBlock"] {
+        align-items: flex-end;
+        gap: 1rem;
+    }
+    .st-key-app_header h1,
+    .st-key-app-header h1 {
+        font-size: clamp(1.85rem, 3vw, 2.45rem);
+        line-height: 1.1;
+        margin: 0;
+        padding: 0 0 0.3rem;
+    }
+    .st-key-app_header [data-testid="stSelectbox"],
+    .st-key-app-header [data-testid="stSelectbox"] {
+        margin-bottom: 0;
+    }
+    .st-key-notes_input_layout,
+    .st-key-notes-input-layout {
+        margin-top: -0.2rem;
+    }
+    .st-key-notes_input_layout [data-testid="stHorizontalBlock"],
+    .st-key-notes-input-layout [data-testid="stHorizontalBlock"] {
+        gap: 1rem;
+    }
+    .st-key-notes_input_layout [data-testid="stVerticalBlock"],
+    .st-key-notes-input-layout [data-testid="stVerticalBlock"] {
+        gap: 0.55rem;
+    }
+    .st-key-generate_initial_flashcards,
+    .st-key-generate-initial-flashcards {
+        margin-top: 0.25rem;
     }
     .st-key-generate_initial_flashcards button,
     .st-key-generate-initial-flashcards button {
@@ -927,15 +961,35 @@ st.markdown(
         .stMain .block-container,
         [data-testid="stAppViewBlockContainer"],
         [data-testid="stMainBlockContainer"] {
-            padding-top: 1.25rem;
+            padding: 0.45rem 0.85rem 1.25rem;
         }
+        .st-key-app_header [data-testid="stHorizontalBlock"],
         .st-key-app-header [data-testid="stHorizontalBlock"] {
-            flex-direction: column;
-            gap: 0.75rem;
+            flex-flow: row wrap !important;
+            gap: 0.35rem 0.65rem;
         }
+        .st-key-app_header [data-testid="stColumn"],
         .st-key-app-header [data-testid="stColumn"] {
+            width: calc(50% - 0.325rem) !important;
+            flex: 1 1 calc(50% - 0.325rem) !important;
+        }
+        .st-key-app_header [data-testid="stColumn"]:first-child,
+        .st-key-app-header [data-testid="stColumn"]:first-child {
             width: 100% !important;
-            flex: 1 1 100% !important;
+            flex-basis: 100% !important;
+        }
+        .st-key-app_header h1,
+        .st-key-app-header h1 {
+            font-size: 1.75rem;
+            padding-bottom: 0.05rem;
+        }
+        .st-key-notes_input_layout [data-testid="stHorizontalBlock"],
+        .st-key-notes-input-layout [data-testid="stHorizontalBlock"] {
+            gap: 0.4rem;
+        }
+        .st-key-notes_input_layout [data-testid="stVerticalBlock"],
+        .st-key-notes-input-layout [data-testid="stVerticalBlock"] {
+            gap: 0.35rem;
         }
     }
     </style>
@@ -1158,7 +1212,7 @@ def mark_target_words_changed():
 # --- STEP 1: INPUT FORM ---
 st.subheader("1. Write your notes", anchor=False)
 with st.container(key="notes_input_layout"):
-    c1, _, c2 = st.columns([1, 0.4, 2])
+    c1, _, c2 = st.columns([1, 0.16, 2.4])
 
 with c1:
     no_assimil_mode = st.toggle(
@@ -1207,11 +1261,10 @@ with c1:
         lesson_data = lessons[selected_lesson]
 
 with c2:
-    st.markdown("""
-    **Enter target words/phrases (one per line):**<br>
-    Add extra notes in parentheses `()`.<br>
-    *Example:* `comment allez vous (formal way)`
-    """, unsafe_allow_html=True)
+    st.caption(
+        "One word or phrase per line · optional notes in parentheses, "
+        "e.g. `comment allez vous (formal way)`"
+    )
     paste_result = _paste_textarea(
         textarea_label="Target Words",
         undo_available_until=tidy_notes_undo_expires_at,
