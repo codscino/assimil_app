@@ -1432,8 +1432,8 @@ if st.session_state.cards_data:
     st.divider()
     st.subheader("2. Review & Edit Cards", anchor=False)
     st.caption(
-        "Cards start collapsed. The text between ampersands (&word&) is highlighted; "
-        "select Edit card to edit or regenerate it. Edits save automatically."
+        "Cards start collapsed. Select Edit card to edit or regenerate it. "
+        "Edits save automatically."
     )
 
     # Keep this control aligned with the half-width dropdowns used elsewhere.
@@ -1473,6 +1473,10 @@ if st.session_state.cards_data:
             expanded=False,
         ):
             with st.container(key=f"card-editor-{idx}"):
+                st.caption(
+                    "`&word&` marks the text to highlight. Keep these markers when "
+                    "editing, or place them back around the intended word."
+                )
                 form_version = st.session_state.card_form_versions.get(idx, 0)
                 widget_prefix = f"card_{st.session_state.card_form_epoch}_{idx}_{form_version}"
                 widget_keys = {
