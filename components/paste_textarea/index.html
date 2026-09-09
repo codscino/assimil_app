@@ -5,6 +5,7 @@
     <script>
       const PASTE_BUTTON_ID = "assimil-target-words-paste";
       const TIDY_BUTTON_ID = "assimil-target-words-tidy";
+      const UNDO_TIDY_BUTTON_ID = "assimil-target-words-undo-tidy";
       let observer;
 
       function send(type, data = {}) {
@@ -30,6 +31,7 @@
 
         appDocument.getElementById(PASTE_BUTTON_ID)?.remove();
         appDocument.getElementById(TIDY_BUTTON_ID)?.remove();
+        appDocument.getElementById(UNDO_TIDY_BUTTON_ID)?.remove();
 
         const wrapper = textarea.parentElement;
         const field = textarea.closest('[data-testid="stTextArea"]');
@@ -109,6 +111,31 @@
         `;
         tidyButton.querySelector("svg").style.cssText = iconStyles;
 
+        const undoAvailable = Number.isFinite(args.undo_available_until)
+          && Date.now() < args.undo_available_until * 1000;
+        let undoTidyButton;
+        if (undoAvailable) {
+          undoTidyButton = appDocument.createElement("button");
+          undoTidyButton.id = UNDO_TIDY_BUTTON_ID;
+          undoTidyButton.type = "button";
+          undoTidyButton.innerHTML = `
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M9 7 4 12l5 5"></path>
+              <path d="M4 12h10a6 6 0 1 1 0 12"></path>
+            </svg>
+          `;
+          undoTidyButton.setAttribute("aria-label", "Revert tidied notes");
+          undoTidyButton.title = "Revert to your original notes";
+          undoTidyButton.style.cssText = `
+            ${baseButtonStyles}
+            width: 1.8rem;
+            margin-left: 0.25rem;
+            border: 1px solid color-mix(in srgb, ${textColor} 22%, transparent);
+            border-radius: 0.45rem;
+          `;
+          undoTidyButton.querySelector("svg").style.cssText = iconStyles;
+        }
+
         const pasteButton = appDocument.createElement("button");
         pasteButton.id = PASTE_BUTTON_ID;
         pasteButton.type = "button";
@@ -148,7 +175,8 @@
           event.stopPropagation();
         };
         pasteButton.addEventListener("pointerdown", suppressTextSelection);
-        for (const button of [tidyButton, pasteButton]) {
+        for (const button of [tidyButton, undoTidyButton, pasteButton]) {
+          if (!button) continue;
           button.addEventListener("contextmenu", suppressTextSelection);
         }
 
@@ -182,6 +210,15 @@
           // the injected button. Keep click as the keyboard-accessible path.
           if (!tidyRequestedFromPointer) requestTidy();
         });
+        undoTidyButton?.addEventListener("click", event => {
+          event.preventDefault();
+          event.stopPropagation();
+          setValue({
+            request_id: requestId(),
+            action: "undo_tidy",
+            status: "requested",
+          });
+        });
         pasteButton.addEventListener("click", async event => {
           event.stopPropagation();
           const id = requestId();
@@ -213,6 +250,14 @@
         });
 
         label.appendChild(tidyButton);
+        if (undoTidyButton) {
+          label.appendChild(undoTidyButton);
+          const removeUndoWhenExpired = () => undoTidyButton.remove();
+          window.setTimeout(
+            removeUndoWhenExpired,
+            Math.max(0, args.undo_available_until * 1000 - Date.now())
+          );
+        }
         wrapper.appendChild(pasteButton);
         return true;
       }

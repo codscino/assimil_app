@@ -92,8 +92,12 @@ def build_regeneration_prompt(
        non-empty field explicitly edited by the user.
     4. Return a concise natural `fr_word`, its exact {target_language} translation
        in the legacy JSON field `en_word`, a natural `fr_phrase` containing
-       `fr_word` (case-insensitive), and a {target_language} translation in the
-       legacy JSON field `en_phrase` that contains `en_word` (case-insensitive).
+       `fr_word` (ignoring case and whitespace), and a {target_language}
+       translation in the legacy JSON field `en_phrase` that contains `en_word`
+       with the same comparison rule.
+       Wrap exactly the intended occurrence of each word in its phrase in
+       ampersands, for example `&Le& chat est sur la table`. These markers are
+       required and select the only text Anki will highlight.
     5. Preserve `extra_notes` exactly, including when it is empty.
     6. Return valid JSON matching the requested schema.
     """

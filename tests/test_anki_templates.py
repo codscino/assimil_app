@@ -55,6 +55,15 @@ class TypedAnswerTemplateTests(unittest.TestCase):
         self.assertIn(".toLowerCase()", template)
         self.assertIn('.replace(/\\s+/gu, "")', template)
 
+    def test_highlights_are_driven_only_by_explicit_phrase_markers(self):
+        templates = template_constants()
+
+        for name in ("FRONT_FR2EN", "BACK_FR2EN", "FRONT_EN2FR", "BACK_EN2FR"):
+            template = templates[name]
+            self.assertIn('const marker = /&([^&]*?)&/g;', template)
+            self.assertIn('document.querySelectorAll(".marked-phrase")', template)
+            self.assertNotIn("normalizeForMatch", template)
+
 
 if __name__ == "__main__":
     unittest.main()

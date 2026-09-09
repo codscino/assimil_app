@@ -10,13 +10,20 @@ import html
 import hashlib
 import base64
 import tempfile
-import unicodedata
+import time
 from pathlib import Path
 
 import streamlit.components.v1 as components
 
 from draft_state import build_draft_json, restore_draft_json
 from flashcard_regeneration import build_regeneration_prompt
+from highlight_markup import (
+    HIGHLIGHT_PATTERN,
+    ensure_target_marker,
+    phrase_highlight_error,
+    repair_target_marker,
+    strip_highlight_markers,
+)
 from notes_tidy import build_tidy_notes_prompt
 from preferences_state import build_preferences_json, restore_preferences_json
 from speechify_audio import list_french_voices, synthesize_french_audio
@@ -41,6 +48,7 @@ TARGET_LANGUAGES = {
 PREFERENCES_STORAGE_KEY = "assimil-preferences-v1"
 TARGET_WORDS_STORAGE_KEY = "assimil-target-words-v1"
 MAX_TARGET_WORDS_LENGTH = 100_000
+TIDY_NOTES_UNDO_DURATION_SECONDS = 5
 
 _draft_storage = components.declare_component(
     "assimil_draft_storage",
@@ -53,8 +61,7 @@ _paste_textarea = components.declare_component(
 
 FRONT_FR2EN = r"""
 {{#fr_phrase}}
-<div class="phrase">{{fr_phrase}}</div>
-<span class="target-word">{{text:fr_word}}</span>
+<div class="phrase marked-phrase">{{fr_phrase}}</div>
 {{fr_audio}}
 {{/fr_phrase}}
 
@@ -67,36 +74,31 @@ FRONT_FR2EN = r"""
 {{type:nc:en_word}}
 
 <script>
-const phrase = document.querySelector(".phrase");
-const word = document.querySelector(".target-word")?.textContent.trim();
-
-if (phrase && word && !phrase.querySelector(".highlight")) {
-  const variants = {
-    a: "[aàáâäãå]", c: "[cç]", e: "[eèéêë]", i: "[iìíîï]",
-    n: "[nñ]", o: "[oòóôöõø]", u: "[uùúûü]", y: "[yÿ]"
-  };
-  const foldedWord = word.normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/œ/g, "oe").replace(/æ/g, "ae");
-  const pattern = Array.from(foldedWord).map((character) => {
-    if (/\s/.test(character)) return "\\s+";
-    if (variants[character]) return variants[character];
-    if (/[’‘‛'`]/.test(character)) return "[’‘‛'`]";
-    if (/[‐‑‒–—-]/.test(character)) return "[‐‑‒–—-]";
-    return character.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
-  }).join("");
-  phrase.innerHTML = phrase.textContent.replace(
-    new RegExp(pattern, "gi"), "<span class='highlight'>$&</span>"
-  );
-}
+document.querySelectorAll(".marked-phrase").forEach((phrase) => {
+  const source = phrase.textContent;
+  const marker = /&([^&]*?)&/g;
+  const fragment = document.createDocumentFragment();
+  let cursor = 0;
+  let match;
+  while ((match = marker.exec(source)) !== null) {
+    fragment.append(document.createTextNode(source.slice(cursor, match.index)));
+    const highlight = document.createElement("span");
+    highlight.className = "highlight";
+    highlight.textContent = match[1];
+    fragment.append(highlight);
+    cursor = marker.lastIndex;
+  }
+  if (cursor) {
+    fragment.append(document.createTextNode(source.slice(cursor)));
+    phrase.replaceChildren(fragment);
+  }
+});
 </script>
 """
 
 BACK_FR2EN = r"""
 {{#fr_phrase}}
-<div class="phrase">{{fr_phrase}}</div>
-<span class="target-word">{{text:fr_word}}</span>
+<div class="phrase marked-phrase">{{fr_phrase}}</div>
 {{/fr_phrase}}
 
 {{^fr_phrase}}
@@ -145,14 +147,11 @@ BACK_FR2EN = r"""
 })();
 </script>
 
-<div class="translation">
-  {{#en_phrase}}{{en_phrase}}{{/en_phrase}}
-  {{^en_phrase}}{{en_word}}{{/en_phrase}}
-</div>
-
 {{#en_phrase}}
+<div class="translation marked-phrase">{{en_phrase}}</div>
 {{/en_phrase}}
 {{^en_phrase}}
+<div class="translation">{{en_word}}</div>
 {{/en_phrase}}
 
 {{#extra_notes}}
@@ -160,54 +159,31 @@ BACK_FR2EN = r"""
 {{/extra_notes}}
 
 <script>
-const phrase = document.querySelector(".phrase");
-const word = document.querySelector(".target-word")?.textContent.trim();
-
-if (phrase && word && !phrase.querySelector(".highlight")) {
-  const normalizeForMatch = (input) => {
-    let normalized = "";
-    const positions = [];
-    for (let start = 0; start < input.length;) {
-      const character = String.fromCodePoint(input.codePointAt(start));
-      const end = start + character.length;
-      if (/\s/u.test(character)) {
-        if (normalized && !normalized.endsWith(" ")) {
-          normalized += " "; positions.push({ start, end });
-        } else if (normalized.endsWith(" ")) positions[positions.length - 1].end = end;
-      } else {
-        const folded = character.normalize("NFKD").replace(/\p{M}/gu, "")
-          .toLowerCase().replace(/[’‘‛`]/g, "'").replace(/[‐‑‒–—]/g, "-")
-          .replace(/œ/g, "oe").replace(/æ/g, "ae");
-        for (const foldedCharacter of folded) {
-          normalized += foldedCharacter; positions.push({ start, end });
-        }
-      }
-      start = end;
-    }
-    if (normalized.endsWith(" ")) { normalized = normalized.slice(0, -1); positions.pop(); }
-    return { normalized, positions };
-  };
-  const original = phrase.textContent;
-  const phraseMatch = normalizeForMatch(original);
-  const targetMatch = normalizeForMatch(word);
-  const matchIndex = phraseMatch.normalized.indexOf(targetMatch.normalized);
-  if (targetMatch.normalized && matchIndex !== -1) {
-    const start = phraseMatch.positions[matchIndex].start;
-    const end = phraseMatch.positions[matchIndex + targetMatch.normalized.length - 1].end;
+document.querySelectorAll(".marked-phrase").forEach((phrase) => {
+  const source = phrase.textContent;
+  const marker = /&([^&]*?)&/g;
+  const fragment = document.createDocumentFragment();
+  let cursor = 0;
+  let match;
+  while ((match = marker.exec(source)) !== null) {
+    fragment.append(document.createTextNode(source.slice(cursor, match.index)));
     const highlight = document.createElement("span");
     highlight.className = "highlight";
-    highlight.textContent = original.slice(start, end);
-    phrase.replaceChildren(document.createTextNode(original.slice(0, start)), highlight,
-      document.createTextNode(original.slice(end)));
+    highlight.textContent = match[1];
+    fragment.append(highlight);
+    cursor = marker.lastIndex;
   }
-}
+  if (cursor) {
+    fragment.append(document.createTextNode(source.slice(cursor)));
+    phrase.replaceChildren(fragment);
+  }
+});
 </script>
 """
 
 FRONT_EN2FR = r"""
 {{#en_phrase}}
-<div class="phrase">{{en_phrase}}</div>
-<span class="target-word">{{text:en_word}}</span>
+<div class="phrase marked-phrase">{{en_phrase}}</div>
 {{/en_phrase}}
 
 {{^en_phrase}}
@@ -222,54 +198,31 @@ FRONT_EN2FR = r"""
 {{type:nc:fr_word}}
 
 <script>
-const phrase = document.querySelector(".phrase");
-const word = document.querySelector(".target-word")?.textContent.trim();
-
-if (phrase && word && !phrase.querySelector(".highlight")) {
-  const normalizeForMatch = (input) => {
-    let normalized = "";
-    const positions = [];
-    for (let start = 0; start < input.length;) {
-      const character = String.fromCodePoint(input.codePointAt(start));
-      const end = start + character.length;
-      if (/\s/u.test(character)) {
-        if (normalized && !normalized.endsWith(" ")) {
-          normalized += " "; positions.push({ start, end });
-        } else if (normalized.endsWith(" ")) positions[positions.length - 1].end = end;
-      } else {
-        const folded = character.normalize("NFKD").replace(/\p{M}/gu, "")
-          .toLowerCase().replace(/[’‘‛`]/g, "'").replace(/[‐‑‒–—]/g, "-")
-          .replace(/œ/g, "oe").replace(/æ/g, "ae");
-        for (const foldedCharacter of folded) {
-          normalized += foldedCharacter; positions.push({ start, end });
-        }
-      }
-      start = end;
-    }
-    if (normalized.endsWith(" ")) { normalized = normalized.slice(0, -1); positions.pop(); }
-    return { normalized, positions };
-  };
-  const original = phrase.textContent;
-  const phraseMatch = normalizeForMatch(original);
-  const targetMatch = normalizeForMatch(word);
-  const matchIndex = phraseMatch.normalized.indexOf(targetMatch.normalized);
-  if (targetMatch.normalized && matchIndex !== -1) {
-    const start = phraseMatch.positions[matchIndex].start;
-    const end = phraseMatch.positions[matchIndex + targetMatch.normalized.length - 1].end;
+document.querySelectorAll(".marked-phrase").forEach((phrase) => {
+  const source = phrase.textContent;
+  const marker = /&([^&]*?)&/g;
+  const fragment = document.createDocumentFragment();
+  let cursor = 0;
+  let match;
+  while ((match = marker.exec(source)) !== null) {
+    fragment.append(document.createTextNode(source.slice(cursor, match.index)));
     const highlight = document.createElement("span");
     highlight.className = "highlight";
-    highlight.textContent = original.slice(start, end);
-    phrase.replaceChildren(document.createTextNode(original.slice(0, start)), highlight,
-      document.createTextNode(original.slice(end)));
+    highlight.textContent = match[1];
+    fragment.append(highlight);
+    cursor = marker.lastIndex;
   }
-}
+  if (cursor) {
+    fragment.append(document.createTextNode(source.slice(cursor)));
+    phrase.replaceChildren(fragment);
+  }
+});
 </script>
 """
 
 BACK_EN2FR = r"""
 {{#en_phrase}}
-<div class="phrase">{{en_phrase}}</div>
-<span class="target-word">{{text:en_word}}</span>
+<div class="phrase marked-phrase">{{en_phrase}}</div>
 {{/en_phrase}}
 
 {{^en_phrase}}
@@ -322,10 +275,12 @@ BACK_EN2FR = r"""
 })();
 </script>
 
-<div class="translation">
-  {{#fr_phrase}}{{fr_phrase}}{{/fr_phrase}}
-  {{^fr_phrase}}{{fr_word}}{{/fr_phrase}}
-</div>
+{{#fr_phrase}}
+<div class="translation marked-phrase">{{fr_phrase}}</div>
+{{/fr_phrase}}
+{{^fr_phrase}}
+<div class="translation">{{fr_word}}</div>
+{{/fr_phrase}}
 
 {{#fr_phrase}}
 {{fr_audio}}
@@ -335,47 +290,25 @@ BACK_EN2FR = r"""
 {{/fr_phrase}}
 
 <script>
-const phrase = document.querySelector(".phrase");
-const word = document.querySelector(".target-word")?.textContent.trim();
-
-if (phrase && word && !phrase.querySelector(".highlight")) {
-  const normalizeForMatch = (input) => {
-    let normalized = "";
-    const positions = [];
-    for (let start = 0; start < input.length;) {
-      const character = String.fromCodePoint(input.codePointAt(start));
-      const end = start + character.length;
-      if (/\s/u.test(character)) {
-        if (normalized && !normalized.endsWith(" ")) {
-          normalized += " "; positions.push({ start, end });
-        } else if (normalized.endsWith(" ")) positions[positions.length - 1].end = end;
-      } else {
-        const folded = character.normalize("NFKD").replace(/\p{M}/gu, "")
-          .toLowerCase().replace(/[’‘‛`]/g, "'").replace(/[‐‑‒–—]/g, "-")
-          .replace(/œ/g, "oe").replace(/æ/g, "ae");
-        for (const foldedCharacter of folded) {
-          normalized += foldedCharacter; positions.push({ start, end });
-        }
-      }
-      start = end;
-    }
-    if (normalized.endsWith(" ")) { normalized = normalized.slice(0, -1); positions.pop(); }
-    return { normalized, positions };
-  };
-  const original = phrase.textContent;
-  const phraseMatch = normalizeForMatch(original);
-  const targetMatch = normalizeForMatch(word);
-  const matchIndex = phraseMatch.normalized.indexOf(targetMatch.normalized);
-  if (targetMatch.normalized && matchIndex !== -1) {
-    const start = phraseMatch.positions[matchIndex].start;
-    const end = phraseMatch.positions[matchIndex + targetMatch.normalized.length - 1].end;
+document.querySelectorAll(".marked-phrase").forEach((phrase) => {
+  const source = phrase.textContent;
+  const marker = /&([^&]*?)&/g;
+  const fragment = document.createDocumentFragment();
+  let cursor = 0;
+  let match;
+  while ((match = marker.exec(source)) !== null) {
+    fragment.append(document.createTextNode(source.slice(cursor, match.index)));
     const highlight = document.createElement("span");
     highlight.className = "highlight";
-    highlight.textContent = original.slice(start, end);
-    phrase.replaceChildren(document.createTextNode(original.slice(0, start)), highlight,
-      document.createTextNode(original.slice(end)));
+    highlight.textContent = match[1];
+    fragment.append(highlight);
+    cursor = marker.lastIndex;
   }
-}
+  if (cursor) {
+    fragment.append(document.createTextNode(source.slice(cursor)));
+    phrase.replaceChildren(fragment);
+  }
+});
 </script>
 """
 
@@ -472,11 +405,11 @@ def build_anki_model(language_code):
 # -----------------------------------------------------------------------------
 class FlashcardItem(BaseModel):
     fr_word: str = Field(description="Cleaned target French word or expression")
-    fr_phrase: str = Field(description="Natural French sentence featuring the target word matching Assimil style")
+    fr_phrase: str = Field(description="Natural French sentence with fr_word wrapped in &ampersands&")
     # These legacy JSON keys keep existing saved cards compatible. Their values
     # contain whichever target language the user selected.
     en_word: str = Field(description="Direct target-language translation of fr_word")
-    en_phrase: str = Field(description="Target-language translation of fr_phrase")
+    en_phrase: str = Field(description="Target-language translation with en_word wrapped in &ampersands&")
     extra_notes: str = Field(description="User notes combined with brief grammar tips if useful")
 
 
@@ -511,79 +444,6 @@ def get_lesson_number(lesson_name):
     return int(match.group()) if match else None
 
 
-def normalize_with_positions(text):
-    """Fold text for matching while retaining offsets into the original text."""
-    normalized = []
-    positions = []
-    punctuation = str.maketrans({
-        "’": "'", "‘": "'", "‛": "'", "`": "'",
-        "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-",
-    })
-
-    for index, character in enumerate(text):
-        if character.isspace():
-            if normalized and normalized[-1] != " ":
-                normalized.append(" ")
-                positions.append([index, index + 1])
-            elif normalized and normalized[-1] == " ":
-                positions[-1][1] = index + 1
-            continue
-
-        replacement = {"œ": "oe", "Œ": "OE", "æ": "ae", "Æ": "AE"}.get(
-            character, character
-        )
-        folded = unicodedata.normalize("NFKD", replacement).translate(punctuation)
-        base_characters = [
-            folded_character.lower()
-            for folded_character in folded
-            if not unicodedata.combining(folded_character)
-        ]
-        if not base_characters and positions:
-            # Include a decomposed accent in the preceding highlighted character.
-            positions[-1][1] = index + 1
-        for folded_character in base_characters:
-            normalized.append(folded_character)
-            positions.append([index, index + 1])
-
-    if normalized and normalized[-1] == " ":
-        normalized.pop()
-        positions.pop()
-    return "".join(normalized), positions
-
-
-def highlight_target(phrase, target):
-    """Return safe HTML with accent/case/spacing-insensitive target highlights."""
-    if not phrase or not target:
-        return html.escape(phrase or "")
-
-    normalized_phrase, positions = normalize_with_positions(phrase)
-    normalized_target, _ = normalize_with_positions(target)
-    if not normalized_target:
-        return html.escape(phrase)
-
-    parts = []
-    original_cursor = 0
-    search_cursor = 0
-    while True:
-        match_index = normalized_phrase.find(normalized_target, search_cursor)
-        if match_index == -1:
-            break
-        match_start = positions[match_index][0]
-        match_end = positions[match_index + len(normalized_target) - 1][1]
-        if match_start >= original_cursor:
-            parts.append(html.escape(phrase[original_cursor:match_start]))
-            parts.append(
-                f'<span class="highlight">{html.escape(phrase[match_start:match_end])}</span>'
-            )
-            original_cursor = match_end
-        search_cursor = match_index + len(normalized_target)
-
-    if not parts:
-        return html.escape(phrase)
-    parts.append(html.escape(phrase[original_cursor:]))
-    return "".join(parts)
-
-
 def flashcard_summary(phrase, target):
     """Create a compact, safely escaped expander label for a flashcard.
 
@@ -594,33 +454,133 @@ def flashcard_summary(phrase, target):
         # Escape the Markdown constructs that could otherwise change the label.
         return re.sub(r"([\\`*_{}\[\]()<>#+\-.!|])", r"\\\1", value)
 
-    if not phrase or not target:
+    if not phrase:
         return escape_label_markdown(phrase or "New Card")
-
-    normalized_phrase, positions = normalize_with_positions(phrase)
-    normalized_target, _ = normalize_with_positions(target)
-    if not normalized_target:
-        return escape_label_markdown(phrase)
 
     parts = []
     original_cursor = 0
-    search_cursor = 0
-    while True:
-        match_index = normalized_phrase.find(normalized_target, search_cursor)
-        if match_index == -1:
-            break
-        match_start = positions[match_index][0]
-        match_end = positions[match_index + len(normalized_target) - 1][1]
+    for match in HIGHLIGHT_PATTERN.finditer(phrase):
+        match_start, match_end = match.span()
         parts.append(escape_label_markdown(phrase[original_cursor:match_start]))
-        highlighted_text = escape_label_markdown(phrase[match_start:match_end])
+        highlighted_text = escape_label_markdown(match.group(1))
         parts.append(f":orange-background[{highlighted_text}]")
         original_cursor = match_end
-        search_cursor = match_index + len(normalized_target)
 
     if not parts:
         return escape_label_markdown(phrase)
     parts.append(escape_label_markdown(phrase[original_cursor:]))
     return "".join(parts)
+
+
+def ensure_card_markers(card):
+    """Upgrade generated or legacy card phrases to explicit highlight markup."""
+    card["fr_phrase"] = ensure_target_marker(
+        card.get("fr_phrase", ""), card.get("fr_word", "")
+    )
+    card["en_phrase"] = ensure_target_marker(
+        card.get("en_phrase", ""), card.get("en_word", "")
+    )
+    return card
+
+
+def card_highlight_errors(card, target_language="Target-language"):
+    """Return phrase containment/markup errors that must be fixed for export."""
+    errors = []
+    french_error = phrase_highlight_error(
+        card.get("fr_phrase", ""),
+        card.get("fr_word", ""),
+        phrase_label="French sentence",
+        target_label="French word",
+    )
+    if french_error:
+        errors.append(french_error)
+    target_error = phrase_highlight_error(
+        card.get("en_phrase", ""),
+        card.get("en_word", ""),
+        phrase_label=f"{target_language} sentence",
+        target_label=f"{target_language} word",
+    )
+    if target_error:
+        errors.append(target_error)
+    return errors
+
+
+def repair_card_highlights_once(client, model_name, cards, target_language):
+    """Ask Gemini once to repair invalid phrases, then validate the result again.
+
+    Words, notes, and metadata remain authoritative. Only the two phrase fields
+    are accepted from Gemini's repair response.
+    """
+    # Incorrect marker placement is deterministic when the target is already in
+    # the phrase. Repair that locally before paying for a semantic rewrite.
+    for card in cards:
+        card["fr_phrase"] = repair_target_marker(
+            card.get("fr_phrase", ""), card.get("fr_word", "")
+        )
+        card["en_phrase"] = repair_target_marker(
+            card.get("en_phrase", ""), card.get("en_word", "")
+        )
+
+    invalid_cards = []
+    for card_index, card in enumerate(cards):
+        errors = card_highlight_errors(card, target_language)
+        if errors:
+            invalid_cards.append(
+                {
+                    "card_index": card_index,
+                    "errors": errors,
+                    "card": card,
+                }
+            )
+
+    if not invalid_cards:
+        return cards, []
+
+    prompt = f"""
+    You are repairing phrase validation errors in French study flashcards.
+
+    Invalid cards, including their zero-based card indexes and validation errors:
+    {json.dumps(invalid_cards, ensure_ascii=False, indent=2)}
+
+    Every supplied card is invalid. Return exactly one repaired card for each
+    input card, in the same order. You MUST rewrite each phrase named in its
+    validation errors; never return an invalid phrase unchanged.
+    Keep `fr_word`, `en_word`, and `extra_notes` exactly unchanged. Rewrite only
+    `fr_phrase` and/or `en_phrase` when necessary.
+
+    Each French phrase must naturally contain its exact `fr_word`, and each
+    {target_language} phrase must naturally contain its exact `en_word`.
+    Comparisons ignore letter case and repeated or surrounding whitespace.
+    Wrap exactly the intended occurrence in ampersands, such as
+    `&Le& chat est sur la table`. Use one matching marker pair per phrase.
+    Return valid JSON matching the requested schema.
+    """
+
+    response = client.models.generate_content(
+        model=model_name,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=list[FlashcardItem],
+            temperature=0.2,
+        ),
+    )
+    repaired_cards = json.loads(response.text)
+    if len(repaired_cards) != len(invalid_cards):
+        raise ValueError("Gemini returned the wrong number of repaired cards.")
+
+    for invalid_card, repaired_card in zip(invalid_cards, repaired_cards):
+        card = cards[invalid_card["card_index"]]
+        card["fr_phrase"] = repaired_card.get("fr_phrase", card.get("fr_phrase", ""))
+        card["en_phrase"] = repaired_card.get("en_phrase", card.get("en_phrase", ""))
+        ensure_card_markers(card)
+
+    remaining_errors = [
+        f"Card {card_number}: {error}"
+        for card_number, card in enumerate(cards, start=1)
+        for error in card_highlight_errors(card, target_language)
+    ]
+    return cards, remaining_errors
 
 
 def parse_input_line(line):
@@ -733,10 +693,14 @@ def generate_flashcards_with_gemini(
     Instructions for each card:
     1. Preserve the French target as written for `fr_word`; only correct clear spelling mistakes.
     2. Write a natural French sentence for `fr_phrase` that matches the conversational Assimil style.
-       - The cleaned `fr_word` must appear inside `fr_phrase` (case-insensitive).
+       - The cleaned `fr_word` must appear inside `fr_phrase`; comparison ignores
+         case and whitespace.
+       - Wrap exactly the intended occurrence in ampersands. Example:
+         for `fr_word` = `le`, write `&Le& chat est sur la table`.
     3. Write the {target_language} translation in the legacy JSON fields
        `en_word` and `en_phrase`.
-       - The cleaned `en_word` must appear inside `en_phrase` (case-insensitive).
+       - The cleaned `en_word` must appear inside `en_phrase`; comparison ignores
+         case and whitespace. Wrap its intended occurrence in ampersands too.
     4. Keep `extra_notes` exactly as provided by the user when present, or leave empty.
     5. Keep the output JSON valid and matching the schema.
     """
@@ -753,10 +717,19 @@ def generate_flashcards_with_gemini(
     parsed_cards = json.loads(response.text)
     
     for idx, item in enumerate(parsed_cards):
+        ensure_card_markers(item)
         if idx < len(parsed_items):
             item["raw_word"] = parsed_items[idx]["raw_word"]
             item["user_notes"] = parsed_items[idx]["user_notes"]
-            
+
+    try:
+        parsed_cards, _ = repair_card_highlights_once(
+            client, model_name, parsed_cards, target_language
+        )
+    except Exception:
+        # Keep the successfully generated cards available for review. The export
+        # section offers the same repair again and reports API errors explicitly.
+        pass
     return parsed_cards
 
 def regenerate_single_card(
@@ -795,7 +768,14 @@ def regenerate_single_card(
     new_card["extra_notes"] = current_card.get("extra_notes", "")
     new_card["raw_word"] = current_card.get("fr_word", "")
     new_card["user_notes"] = current_card.get("extra_notes", "")
-    return new_card
+    ensure_card_markers(new_card)
+    try:
+        repaired_cards, _ = repair_card_highlights_once(
+            client, model_name, [new_card], target_language
+        )
+        return repaired_cards[0]
+    except Exception:
+        return new_card
 
 class DirectionalDeck(genanki.Deck):
     """Put the reverse card of every note in a fixed second deck.
@@ -838,6 +818,15 @@ def build_anki_apkg(
         if shared_tag is None
         else shared_tag.strip()
     )
+
+    validation_errors = []
+    for card_number, item in enumerate(cards_data, start=1):
+        for error in card_highlight_errors(
+            item, TARGET_LANGUAGES[target_language_code]["name"]
+        ):
+            validation_errors.append(f"Card {card_number}: {error}")
+    if validation_errors:
+        raise ValueError(" ".join(validation_errors))
     
     language = TARGET_LANGUAGES[target_language_code]
     deck_code = language["deck_code"]
@@ -860,7 +849,9 @@ def build_anki_apkg(
             french_phrase = item.get("fr_phrase", "")
             target_word = item.get("en_word", "")
             target_phrase = item.get("en_phrase", "")
-            french_text = (french_phrase or french_word).strip()
+            french_text = strip_highlight_markers(
+                french_phrase or french_word
+            ).strip()
             audio_field = ""
             if french_text:
                 # Reuse audio when the exact same phrase occurs on multiple cards.
@@ -881,11 +872,11 @@ def build_anki_apkg(
             note = genanki.Note(
                 model=anki_model,
                 fields=[
-                    french_word,
-                    highlight_target(french_phrase, french_word),
-                    target_word,
-                    highlight_target(target_phrase, target_word),
-                    item.get("extra_notes", ""),
+                    html.escape(french_word),
+                    html.escape(french_phrase),
+                    html.escape(target_word),
+                    html.escape(target_phrase),
+                    html.escape(item.get("extra_notes", "")),
                     audio_field,
                 ],
                 tags=[tag_name] if tag_name else [],
@@ -1112,6 +1103,14 @@ stored_target_words = _draft_storage(
 )
 if "target_words" not in st.session_state:
     st.session_state.target_words = ""
+tidy_notes_undo_expires_at = st.session_state.get("tidy_notes_undo_expires_at")
+if (
+    isinstance(tidy_notes_undo_expires_at, (int, float))
+    and time.time() >= tidy_notes_undo_expires_at
+):
+    st.session_state.pop("tidy_notes_original", None)
+    st.session_state.pop("tidy_notes_undo_expires_at", None)
+    tidy_notes_undo_expires_at = None
 if (
     not clear_target_words
     and not st.session_state.get("target_words_storage_applied")
@@ -1215,6 +1214,7 @@ with c2:
     """, unsafe_allow_html=True)
     paste_result = _paste_textarea(
         textarea_label="Target Words",
+        undo_available_until=tidy_notes_undo_expires_at,
         key="target_words_paste_button",
         default=None,
     )
@@ -1241,8 +1241,31 @@ with c2:
                                 notes_to_tidy,
                             )
                             st.session_state.target_words_storage_applied = True
+                            st.session_state.tidy_notes_original = notes_to_tidy
+                            st.session_state.tidy_notes_undo_expires_at = (
+                                time.time() + TIDY_NOTES_UNDO_DURATION_SECONDS
+                            )
+                            # Render again so the injected undo control receives
+                            # the newly created expiry time immediately.
+                            st.rerun()
                         except Exception as error:
                             st.error(f"Could not tidy the notes: {error}")
+            elif paste_result.get("action") == "undo_tidy":
+                original_notes = st.session_state.get("tidy_notes_original")
+                undo_expires_at = st.session_state.get("tidy_notes_undo_expires_at")
+                if (
+                    isinstance(original_notes, str)
+                    and isinstance(undo_expires_at, (int, float))
+                    and time.time() < undo_expires_at
+                ):
+                    st.session_state.target_words = original_notes
+                    st.session_state.target_words_storage_applied = True
+                    st.toast("Restored your original notes.", icon="↩️")
+                else:
+                    st.toast("The tidy-notes undo window has expired.", icon="⏱️")
+                st.session_state.pop("tidy_notes_original", None)
+                st.session_state.pop("tidy_notes_undo_expires_at", None)
+                st.rerun()
             elif paste_result.get("status") == "success":
                 pasted_value = paste_result.get("value", "")
                 if (
@@ -1343,7 +1366,8 @@ if st.session_state.cards_data:
     st.divider()
     st.subheader("2. Review & Edit Cards", anchor=False)
     st.caption(
-        "Cards start collapsed. Select Edit card to edit or regenerate it; edits save automatically."
+        "Cards start collapsed. The text between ampersands (&word&) is highlighted; "
+        "select Edit card to edit or regenerate it. Edits save automatically."
     )
 
     # Keep this control aligned with the half-width dropdowns used elsewhere.
@@ -1372,6 +1396,9 @@ if st.session_state.cards_data:
     all_widget_keys = {}
 
     for idx, card in enumerate(cards_list):
+        ensure_card_markers(card)
+        if idx < len(st.session_state.card_regeneration_baselines):
+            ensure_card_markers(st.session_state.card_regeneration_baselines[idx])
         with st.expander(
             ":gray[Edit card ·] "
             + flashcard_summary(
@@ -1405,9 +1432,17 @@ if st.session_state.cards_data:
                         value=card.get("fr_phrase", ""),
                         key=widget_keys["fr_phrase"],
                         height=60,
+                        help="Wrap the intended French word between ampersands: &word&.",
                         on_change=save_card_field,
                         args=(idx, "fr_phrase", widget_keys["fr_phrase"]),
                     )
+                    if french_error := phrase_highlight_error(
+                        card.get("fr_phrase", ""),
+                        card.get("fr_word", ""),
+                        phrase_label="French sentence",
+                        target_label="French word",
+                    ):
+                        st.error(french_error)
 
                 with col_target:
                     st.text_input(
@@ -1422,9 +1457,20 @@ if st.session_state.cards_data:
                         value=card.get("en_phrase", ""),
                         key=widget_keys["en_phrase"],
                         height=60,
+                        help=(
+                            f"Wrap the intended {target_language_name} word in "
+                            "ampersands: &word&."
+                        ),
                         on_change=save_card_field,
                         args=(idx, "en_phrase", widget_keys["en_phrase"]),
                     )
+                    if target_error := phrase_highlight_error(
+                        card.get("en_phrase", ""),
+                        card.get("en_word", ""),
+                        phrase_label=f"{target_language_name} sentence",
+                        target_label=f"{target_language_name} word",
+                    ):
+                        st.error(target_error)
 
                 with col_opt:
                     st.text_input(
@@ -1473,6 +1519,60 @@ if st.session_state.cards_data:
     st.subheader("3. Export Deck", anchor=False)
 
     save_all_card_widgets(all_widget_keys)
+    cards_for_export = [dict(card) for card in st.session_state.cards_data]
+    export_validation_errors = [
+        f"Card {card_number}: {error}"
+        for card_number, card in enumerate(cards_for_export, start=1)
+        for error in card_highlight_errors(card, target_language_name)
+    ]
+    if repair_result := st.session_state.pop("highlight_repair_result", None):
+        if repair_result["success"]:
+            st.success(repair_result["message"])
+        else:
+            st.warning(repair_result["message"])
+    if export_validation_errors:
+        st.error(
+            "Export is locked until the phrase errors are fixed: "
+            + " ".join(export_validation_errors)
+        )
+        if st.button(
+            "✨ Fix phrase errors with Gemini",
+            disabled=not bool(api_key),
+            help=(
+                "Wrong markers are moved locally first. Gemini then gets one semantic "
+                "repair pass, and the app validates every card again."
+            ),
+        ):
+            try:
+                with st.spinner("Gemini is repairing and rechecking the phrases..."):
+                    repair_client = genai.Client(api_key=api_key)
+                    repaired_cards, remaining_errors = repair_card_highlights_once(
+                        repair_client,
+                        model_choice,
+                        cards_for_export,
+                        target_language_name,
+                    )
+                st.session_state.cards_data = repaired_cards
+                st.session_state.card_regeneration_baselines = [
+                    dict(card) for card in repaired_cards
+                ]
+                st.session_state.card_form_epoch += 1
+                st.session_state.card_form_versions = {}
+                st.session_state.pop("prepared_apkg", None)
+                st.session_state.pop("prepared_apkg_signature", None)
+                st.session_state.highlight_repair_result = {
+                    "success": not remaining_errors,
+                    "message": (
+                        "Gemini fixed the phrase errors and export is unlocked."
+                        if not remaining_errors
+                        else "Gemini repaired the cards once, but some errors remain: "
+                        + " ".join(remaining_errors)
+                    ),
+                }
+                st.rerun()
+            except Exception as error:
+                st.error(f"Gemini could not repair the phrase errors: {error}")
+
     speechify_api_key = st.secrets.get("SPEECHIFY_API_KEY", "")
 
     if not speechify_api_key:
@@ -1508,7 +1608,9 @@ if st.session_state.cards_data:
             )
             voice_by_id = {voice["id"]: voice for voice in speechify_voices}
             preview_phrase = (
-                st.session_state.cards_data[0].get("fr_phrase", "").strip()
+                strip_highlight_markers(
+                    st.session_state.cards_data[0].get("fr_phrase", "")
+                ).strip()
                 if st.session_state.cards_data
                 else ""
             )
@@ -1548,7 +1650,6 @@ if st.session_state.cards_data:
                 if preview_audio := st.session_state.get("speechify_preview_audio"):
                     st.audio(preview_audio, format="audio/mpeg")
 
-            cards_for_export = [dict(card) for card in st.session_state.cards_data]
             lesson_for_export = st.session_state.selected_lesson
             tag_for_export = st.session_state.shared_tag
             voice_for_export = selected_voice_id
@@ -1584,6 +1685,7 @@ if st.session_state.cards_data:
                 "📦 Approve All & Download .apkg",
                 type="primary",
                 use_container_width=True,
+                disabled=bool(export_validation_errors),
             ):
                 try:
                     with st.spinner(
