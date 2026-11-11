@@ -1516,7 +1516,7 @@ if st.session_state.cards_data is not None:
             st.rerun()
     with col_actions3:
         st.button(
-            "Collapse all cards",
+            "🔼 Collapse all cards",
             key="collapse_all_cards",
             on_click=collapse_all_cards,
             use_container_width=True,
