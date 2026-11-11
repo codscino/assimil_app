@@ -190,6 +190,25 @@ class CardReviewTests(unittest.TestCase):
         self.assertIn("even if not edited", regeneration_request["contents"])
         self.assertEqual(self.app.session_state.cards_data[0]["en_word"], "buongiorno")
 
+    def test_generation_uses_supplied_marked_sentence_and_notes(self):
+        sentence = "Non, &en fait& je préfère un café."
+        self.app.text_area(key="target_words").set_value(sentence + " (contrast)").run()
+        response = self.client.return_value.models.generate_content
+        # A model rewrite must not replace the sentence the user supplied.
+        response.return_value = SimpleNamespace(text=json.dumps([{
+            "fr_word": "en fait", "fr_phrase": "&En fait&, je reste.",
+            "en_word": "actually", "en_phrase": "No, &actually& I prefer a coffee.",
+            "extra_notes": "model notes",
+        }]))
+        self.app.button(key="generate_initial_flashcards").click().run()
+        self.assertFalse(self.app.exception)
+        card = self.app.session_state.cards_data[0]
+        self.assertEqual(card["fr_word"], "en fait")
+        self.assertEqual(card["fr_phrase"], sentence)
+        self.assertEqual(card["extra_notes"], "contrast")
+        self.assertIn('"raw_word": "en fait"', response.call_args.kwargs["contents"])
+        self.assertIn("Do not invent a new", response.call_args.kwargs["contents"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -24,6 +24,7 @@ from highlight_markup import (
     repair_target_marker,
     strip_highlight_markers,
 )
+from notes_input import parse_user_input
 from notes_tidy import build_tidy_notes_prompt
 from preferences_state import build_preferences_json, restore_preferences_json
 from speechify_audio import list_french_voices, synthesize_french_audio
@@ -584,49 +585,6 @@ def repair_card_highlights_once(client, model_name, cards, target_language):
     return cards, remaining_errors
 
 
-def parse_input_line(line):
-    match = re.match(r'^(.*?)\s*\((.*)\)\s*$', line)
-    if match:
-        return match.group(1).strip(), match.group(2).strip()
-
-    word, separator, notes = line.partition("(")
-    return word.strip(), notes.rstrip(") ").strip() if separator else ""
-
-
-def parse_user_input(raw_text):
-    items = []
-    pending_line = ""
-    lines = raw_text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-
-    for line in lines:
-        has_list_marker = bool(re.match(r'^\s*(?:[•●▪◦☐☑-]|\d+[.)])\s+', line))
-        line = re.sub(r'^\s*(?:[•●▪◦☐☑-]|\d+[.)])\s+', "", line).strip()
-        if not line:
-            continue
-
-        if pending_line and (has_list_marker or "(" in line):
-            word, notes = parse_input_line(pending_line)
-            if word:
-                items.append({"raw_word": word, "user_notes": notes})
-            pending_line = ""
-
-        pending_line = f"{pending_line} {line}".strip()
-        if pending_line.count("(") > pending_line.count(")"):
-            continue
-
-        word, notes = parse_input_line(pending_line)
-        if word:
-            items.append({"raw_word": word, "user_notes": notes})
-        pending_line = ""
-
-    if pending_line:
-        word, notes = parse_input_line(pending_line)
-        if word:
-            items.append({"raw_word": word, "user_notes": notes})
-
-    return items
-
-
 def tidy_target_notes(api_key, model_name, raw_text):
     """Rewrite rough notes into the compact input format used by card generation."""
     client = genai.Client(api_key=api_key)
@@ -696,6 +654,9 @@ def generate_flashcards_with_gemini(
     Instructions for each card:
     1. Preserve the French target as written for `fr_word`; only correct clear spelling mistakes.
     2. Write a natural French sentence for `fr_phrase` that matches the conversational Assimil style.
+       - If the input item supplies `fr_phrase`, use that exact sentence, including
+         its &...& markers, and use `raw_word` as `fr_word`. Do not invent a new
+         sentence. Translate the supplied sentence and the marked expression.
        - The cleaned `fr_word` must appear inside `fr_phrase`; comparison ignores
          case and whitespace.
        - Wrap exactly the intended occurrence in ampersands. Example:
@@ -721,10 +682,15 @@ def generate_flashcards_with_gemini(
     parsed_cards = json.loads(response.text)
     
     for idx, item in enumerate(parsed_cards):
-        ensure_card_markers(item)
         if idx < len(parsed_items):
-            item["raw_word"] = parsed_items[idx]["raw_word"]
-            item["user_notes"] = parsed_items[idx]["user_notes"]
+            source = parsed_items[idx]
+            if "fr_phrase" in source:
+                item["fr_word"] = source["raw_word"]
+                item["fr_phrase"] = source["fr_phrase"]
+            item["raw_word"] = source["raw_word"]
+            item["user_notes"] = source["user_notes"]
+            item["extra_notes"] = source["user_notes"]
+        ensure_card_markers(item)
 
     try:
         parsed_cards, _ = repair_card_highlights_once(
@@ -1334,7 +1300,8 @@ with c1:
 with c2:
     st.caption(
         "One word or phrase per line · optional notes in parentheses, "
-        "e.g. `comment allez vous (formal way)`"
+        "e.g. `comment allez vous (formal way)`. To use your own sentence, "
+        "mark its target: `Non, &en fait& je préfère un café. (extra notes)`"
     )
     paste_result = _paste_textarea(
         textarea_label="Target Words",

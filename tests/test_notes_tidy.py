@@ -4,6 +4,15 @@ from notes_tidy import build_tidy_notes_prompt
 
 
 class NotesTidyPromptTests(unittest.TestCase):
+    def test_marked_sentences_and_explicit_notes_are_preserved(self):
+        source = "Non, &en fait& je préfère un café. (actually, contrast)"
+        prompt = build_tidy_notes_prompt(source)
+        self.assertIn("preserve the entire sentence and its exact marker placement", prompt)
+        self.assertIn("do not extract it into a separate line", prompt)
+        self.assertIn("Keep any trailing parenthetical extra notes", prompt)
+        self.assertIn("take precedence over the cleanup rules", prompt)
+        self.assertIn(source, prompt)
+
     def test_prompt_requests_semantic_one_line_conversion(self):
         prompt = build_tidy_notes_prompt("informale -> s'il te plaît")
 

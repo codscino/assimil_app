@@ -14,10 +14,19 @@ def build_tidy_notes_prompt(raw_text):
     `French word or expression`
     or, only when a note is genuinely needed:
     `French word or expression (concise note supported by the source context)`
+    or, when the source supplies a sentence with an &...& marked target:
+    `Original French sentence with &marked expression& (optional source notes)`
 
     Rules:
     1. Put exactly one complete French target word or expression on each output line.
        Join adjacent source lines when they are clearly fragments of the same target.
+       A supplied sentence containing an &...& marked target is one complete item:
+       preserve the entire sentence and its exact marker placement. The marked
+       text is the target word/expression; do not extract it into a separate line,
+       remove its markers, or replace the surrounding sentence with a new one.
+       Keep any trailing parenthetical extra notes after that sentence, including
+       user-supplied translations in those explicit notes. These explicit notes
+       and marked sentences take precedence over the cleanup rules below.
     2. Read the surrounding context to distinguish French targets from headings,
        ordinary translations, explanations, labels, bullets, and other organization.
        Symbols such as colons and arrows have no fixed meaning; interpret their
@@ -42,6 +51,9 @@ def build_tidy_notes_prompt(raw_text):
     6. Preserve every genuine French target and its order, remove duplicates, and
        correct only clear spelling, accent, capitalization, or punctuation errors.
     7. Do not generate flashcard sentences. Return JSON matching the schema only.
+
+    Marked sentence example (keep unchanged):
+    `Non, &en fait& je préfère un café. (actually, contrast)`
 
     Example transformation:
     `per favore:\n- informale singolare -> s'il te plait (se egli ti piace)\n- formale plurale -> s'il vous plait (se egli vi piace)`
