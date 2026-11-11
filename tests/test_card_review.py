@@ -163,6 +163,33 @@ class CardReviewTests(unittest.TestCase):
         self.assertEqual(self.app.session_state.cards_data[0]["fr_word"], "")
         self.assertEqual(self.button("✨ Generate").label, "✨ Generate")
 
+    def test_italian_selection_reaches_generation_and_regeneration(self):
+        self.app.selectbox(key="target_language").select("it").run()
+        self.assertIsNone(self.app.session_state.cards_data)
+        self.app.text_area(key="target_words").set_value("bonjour").run()
+        italian_card = {
+            "fr_word": "bonjour", "fr_phrase": "Je dis &bonjour&.",
+            "en_word": "buongiorno", "en_phrase": "Dico &buongiorno&.",
+            "extra_notes": "",
+        }
+        response = self.client.return_value.models.generate_content
+        response.return_value = SimpleNamespace(text=json.dumps([italian_card]))
+        self.app.button(key="generate_initial_flashcards").click().run()
+        self.assertFalse(self.app.exception)
+        initial_request = response.call_args.kwargs
+        self.assertIn("exclusively in Italian", initial_request["contents"])
+        self.assertIn("exclusively in Italian", initial_request["config"].system_instruction)
+        self.assertEqual(self.app.session_state.cards_target_language, "it")
+
+        response.return_value = SimpleNamespace(text=json.dumps(italian_card))
+        next(button for button in self.app.button if button.label == "🔄 Regenerate").click().run()
+        self.assertFalse(self.app.exception)
+        regeneration_request = response.call_args.kwargs
+        self.assertIn("exclusively in Italian", regeneration_request["contents"])
+        self.assertIn("exclusively in Italian", regeneration_request["config"].system_instruction)
+        self.assertIn("even if not edited", regeneration_request["contents"])
+        self.assertEqual(self.app.session_state.cards_data[0]["en_word"], "buongiorno")
+
 
 if __name__ == "__main__":
     unittest.main()

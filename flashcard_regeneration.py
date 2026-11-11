@@ -10,6 +10,19 @@ FIELD_LABELS = {
 }
 
 
+def translation_language_instruction(target_language):
+    """Make the selected language authoritative despite legacy field names."""
+    return (
+        f"The selected translation language is {target_language}. "
+        f"Write `en_word` and `en_phrase` exclusively in {target_language}. "
+        "The `en_` prefix is a legacy storage name, not an instruction to use English. "
+        "Keep `fr_word` and `fr_phrase` in French. "
+        "Lesson references, user notes, and existing cards may contain other languages; "
+        "they do not override the selected translation language. "
+        "Before returning JSON, verify that both translation fields use the selected language."
+    )
+
+
 def changed_content_fields(previous_card, current_card):
     """Return user-edited content fields in conflict-resolution order."""
     return [
@@ -74,6 +87,8 @@ def build_regeneration_prompt(
     return f"""
     You are an expert French tutor refreshing one Assimil Anki flashcard.
 
+    {translation_language_instruction(target_language)}
+
     {context}
 
     Current flashcard values submitted by the user:
@@ -85,8 +100,10 @@ def build_regeneration_prompt(
     CRITICAL INSTRUCTIONS:
     1. Refresh the entire card from the current values above. Do not use a previous
        value when it conflicts with a current value.
-    2. Preserve current text when it is natural and consistent; rewrite fields that
-       must change to make the card coherent.
+    2. Preserve current text when it is natural and consistent with the selected
+       translation language; translate existing translation fields into
+       {target_language} if they are in another language, even if not edited.
+       Rewrite fields that must change to make the card coherent.
     3. Resolve conflicts in this strict order: `fr_word` > `fr_phrase` > `en_word`
        > `en_phrase`. The primary source of truth identifies the highest-priority
        non-empty field explicitly edited by the user.

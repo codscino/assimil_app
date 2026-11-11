@@ -16,7 +16,7 @@ from pathlib import Path
 import streamlit.components.v1 as components
 
 from draft_state import build_draft_json, restore_draft_json
-from flashcard_regeneration import build_regeneration_prompt
+from flashcard_regeneration import build_regeneration_prompt, translation_language_instruction
 from highlight_markup import (
     HIGHLIGHT_PATTERN,
     ensure_target_marker,
@@ -563,6 +563,7 @@ def repair_card_highlights_once(client, model_name, cards, target_language):
             response_mime_type="application/json",
             response_schema=list[FlashcardItem],
             temperature=0.2,
+            system_instruction=translation_language_instruction(target_language),
         ),
     )
     repaired_cards = json.loads(response.text)
@@ -685,6 +686,8 @@ def generate_flashcards_with_gemini(
     prompt = f"""
     You are an expert French tutor creating Anki flashcards for the Assimil method.
 
+    {translation_language_instruction(target_language)}
+
     {context}
 
     User target words/phrases:
@@ -710,7 +713,8 @@ def generate_flashcards_with_gemini(
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
-            response_schema=list[FlashcardItem]
+            response_schema=list[FlashcardItem],
+            system_instruction=translation_language_instruction(target_language),
         )
     )
     
@@ -760,7 +764,8 @@ def regenerate_single_card(
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
-            response_schema=FlashcardItem
+            response_schema=FlashcardItem,
+            system_instruction=translation_language_instruction(target_language),
         )
     )
     
