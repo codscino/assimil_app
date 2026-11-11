@@ -1221,6 +1221,15 @@ def add_empty_card():
     invalidate_card_export()
 
 
+def card_expander_key(card_index):
+    return f"card_expander_{st.session_state.card_form_epoch}_{card_index}"
+
+
+def collapse_all_cards():
+    for card_index in range(len(st.session_state.cards_data)):
+        st.session_state[card_expander_key(card_index)] = False
+
+
 def dismiss_card_deletion():
     st.session_state.pop("pending_card_deletion", None)
 
@@ -1480,7 +1489,7 @@ if st.session_state.cards_data is not None:
     st.divider()
     st.subheader("2. Review & Edit Cards", anchor=False)
     st.caption(
-        "Generated cards start collapsed. Select Edit card to edit or regenerate it. "
+        "Cards stay open until you collapse them. Select Edit card to open or close it. "
         "Edits save automatically."
     )
 
@@ -1494,7 +1503,7 @@ if st.session_state.cards_data is not None:
             key="shared_tag_editor",
         )
     
-    col_actions1, col_actions2 = st.columns([1, 1])
+    col_actions1, col_actions2, col_actions3 = st.columns([2, 1, 1])
     with col_actions2:
         if st.button("🗑️ Reset All Cards", use_container_width=True):
             st.session_state.cards_data = None
@@ -1505,6 +1514,13 @@ if st.session_state.cards_data is not None:
             st.session_state.pop("prepared_apkg_signature", None)
             st.session_state.clear_browser_draft = True
             st.rerun()
+    with col_actions3:
+        st.button(
+            "Collapse all cards",
+            key="collapse_all_cards",
+            on_click=collapse_all_cards,
+            use_container_width=True,
+        )
 
     cards_list = st.session_state.cards_data
     all_widget_keys = {}
@@ -1514,12 +1530,18 @@ if st.session_state.cards_data is not None:
         ensure_card_markers(card)
         if idx < len(st.session_state.card_regeneration_baselines):
             ensure_card_markers(st.session_state.card_regeneration_baselines[idx])
+        expander_key = card_expander_key(idx)
+        # The summary changes during editing/generation. Carry the current state
+        # forward even when Streamlit gives the updated expander a new identity.
+        st.session_state[expander_key] = st.session_state.get(expander_key, True)
         with st.expander(
             ":gray[Edit card ·] "
             + flashcard_summary(
                 card.get("fr_phrase", ""), card.get("fr_word", "")
             ),
-            expanded=needs_generation,
+            expanded=True,
+            key=expander_key,
+            on_change="rerun",
         ):
             with st.container(key=f"card-editor-{idx}"):
                 st.caption(

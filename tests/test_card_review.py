@@ -110,7 +110,45 @@ class CardReviewTests(unittest.TestCase):
         self.assertNotIn("needs_generation", self.app.session_state.cards_data[-1])
         self.assertEqual(self.app.session_state.cards_data[-1]["fr_word"], "salut")
         self.assertEqual(self.app.button(key="card_0_2_1_regenerate").label, "🔄 Regenerate")
+        self.assertTrue(self.app.session_state["card_expander_0_2"])
         self.assertFalse(self.button("📦 Approve All & Download .apkg").disabled)
+
+    def test_regenerate_preserves_expansion_and_manual_collapse(self):
+        self.client.return_value.models.generate_content.return_value = SimpleNamespace(
+            text=json.dumps({
+                **self.cards[0], "fr_phrase": "Elle dit &bonjour&.",
+                "en_phrase": "She says &hello&.",
+            })
+        )
+        self.app.button(key="card_0_0_0_regenerate").click().run()
+        self.assertFalse(self.app.exception)
+        self.assertTrue(self.app.session_state["card_expander_0_0"])
+        self.assertEqual(
+            self.app.session_state.cards_data[0]["fr_phrase"], "Elle dit &bonjour&."
+        )
+        # Simulate the state sent by the browser when a user closes a card.
+        self.app.session_state["card_expander_0_0"] = False
+        self.app.run()
+        self.app.text_input(key="card_0_1_0_notes").set_value("Keep open").run()
+        self.assertFalse(self.app.session_state["card_expander_0_0"])
+        self.assertTrue(self.app.session_state["card_expander_0_1"])
+
+    def test_collapse_all_includes_unfinished_cards_and_preserves_edits(self):
+        self.app.text_input(key="card_0_0_0_notes").set_value("Keep this note").run()
+        self.app.button(key="add_card").click().run()
+        self.app.button(key="collapse_all_cards").click().run()
+        self.assertFalse(self.app.exception)
+        self.assertTrue(all(
+            not self.app.session_state[f"card_expander_0_{idx}"]
+            for idx in range(3)
+        ))
+        self.assertEqual(self.app.session_state.cards_data[0]["extra_notes"], "Keep this note")
+        self.assertTrue(self.app.session_state.cards_data[2]["needs_generation"])
+        self.app.run()
+        self.assertFalse(self.app.session_state["card_expander_0_2"])
+        self.app.button(key="add_card").click().run()
+        self.assertTrue(self.app.session_state["card_expander_0_3"])
+        self.assertFalse(self.app.session_state["card_expander_0_2"])
 
     def test_last_card_can_be_deleted_and_replaced(self):
         for _ in range(2):
