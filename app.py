@@ -1800,7 +1800,13 @@ if st.session_state.cards_data is not None:
                             st.error(f"Could not generate voice preview: {error}")
 
                 if preview_audio := st.session_state.get("speechify_preview_audio"):
-                    st.audio(preview_audio, format="audio/mpeg")
+                    # Embed the short preview so playback does not depend on a
+                    # separate request to Streamlit's temporary media storage.
+                    preview_base64 = base64.b64encode(preview_audio).decode("ascii")
+                    st.audio(
+                        f"data:audio/mpeg;base64,{preview_base64}",
+                        format="audio/mpeg",
+                    )
 
             lesson_for_export = st.session_state.selected_lesson
             tag_for_export = st.session_state.shared_tag
