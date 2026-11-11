@@ -1069,7 +1069,7 @@ target_language_name = target_language["name"]
 
 # Existing translations cannot safely be relabelled as another language.
 previous_language = st.session_state.get("cards_target_language", target_language_code)
-if previous_language != target_language_code and st.session_state.get("cards_data"):
+if previous_language != target_language_code and st.session_state.get("cards_data") is not None:
     st.session_state.cards_data = None
     st.session_state.card_regeneration_baselines = []
     st.session_state.card_form_versions = {}
@@ -1139,7 +1139,7 @@ stored_draft = _draft_storage(
     key="assimil_draft_reader",
     default=None,
 )
-if not clear_browser_draft and not st.session_state.cards_data:
+if not clear_browser_draft and st.session_state.cards_data is None:
     restored_draft = restore_draft_json(
         stored_draft,
         target_language_code,
@@ -1203,6 +1203,50 @@ def save_all_card_widgets(all_widget_keys):
     """Final synchronization used immediately before exporting the deck."""
     for card_index, widget_keys in all_widget_keys.items():
         card_from_widgets(card_index, widget_keys)
+
+
+def invalidate_card_export():
+    for key in ("prepared_apkg", "prepared_apkg_signature", "apkg_auto_download_signature"):
+        st.session_state.pop(key, None)
+    clear_voice_preview()
+
+
+def add_empty_card():
+    card = dict.fromkeys(
+        ("fr_word", "fr_phrase", "en_word", "en_phrase", "extra_notes"), ""
+    )
+    card["needs_generation"] = True
+    st.session_state.cards_data.append(card)
+    st.session_state.card_regeneration_baselines.append(dict(card))
+    invalidate_card_export()
+
+
+def dismiss_card_deletion():
+    st.session_state.pop("pending_card_deletion", None)
+
+
+@st.dialog("Delete this card?", on_dismiss=dismiss_card_deletion)
+def confirm_delete_card(card_index, form_epoch):
+    # Guard against a stale dialog after replacing or reindexing the draft.
+    if form_epoch != st.session_state.card_form_epoch:
+        st.session_state.pop("pending_card_deletion", None)
+        st.rerun()
+    card = st.session_state.cards_data[card_index]
+    st.write(f'Delete card {card_index + 1}: {card.get("fr_word") or "New Card"}?')
+    st.caption("This card will be removed from your draft.")
+    cancel_col, delete_col = st.columns(2)
+    if cancel_col.button("Cancel", use_container_width=True):
+        st.session_state.pop("pending_card_deletion", None)
+        st.rerun()
+    if delete_col.button("Delete", type="primary", use_container_width=True):
+        del st.session_state.cards_data[card_index]
+        del st.session_state.card_regeneration_baselines[card_index]
+        # Index-based widget keys must be refreshed after removing a card.
+        st.session_state.card_form_epoch += 1
+        st.session_state.card_form_versions = {}
+        st.session_state.pop("pending_card_deletion", None)
+        invalidate_card_export()
+        st.rerun()
 
 
 def clear_voice_preview():
@@ -1390,7 +1434,7 @@ if st.button(
                 st.error(f"Error: {str(e)}")
 
 # --- STEP 2: REVIEW & EDIT SECTION ---
-if st.session_state.cards_data:
+if st.session_state.cards_data is not None:
     st.markdown(
         """
         <style>
@@ -1406,6 +1450,10 @@ if st.session_state.cards_data:
         }
         div[data-testid="stExpander"] details[open] > summary svg {
             transform: rotate(180deg);
+        }
+        [class*="st-key-new-card-word-"] input {
+            border: 2px solid #f59e0b;
+            background-color: rgba(245, 158, 11, 0.12);
         }
         @media (max-width: 640px) {
             /* Streamlit columns do not automatically stack on small screens. */
@@ -1432,7 +1480,7 @@ if st.session_state.cards_data:
     st.divider()
     st.subheader("2. Review & Edit Cards", anchor=False)
     st.caption(
-        "Cards start collapsed. Select Edit card to edit or regenerate it. "
+        "Generated cards start collapsed. Select Edit card to edit or regenerate it. "
         "Edits save automatically."
     )
 
@@ -1462,6 +1510,7 @@ if st.session_state.cards_data:
     all_widget_keys = {}
 
     for idx, card in enumerate(cards_list):
+        needs_generation = card.get("needs_generation") is True
         ensure_card_markers(card)
         if idx < len(st.session_state.card_regeneration_baselines):
             ensure_card_markers(st.session_state.card_regeneration_baselines[idx])
@@ -1470,7 +1519,7 @@ if st.session_state.cards_data:
             + flashcard_summary(
                 card.get("fr_phrase", ""), card.get("fr_word", "")
             ),
-            expanded=False,
+            expanded=needs_generation,
         ):
             with st.container(key=f"card-editor-{idx}"):
                 st.caption(
@@ -1490,13 +1539,17 @@ if st.session_state.cards_data:
                 col_fr, col_target, col_opt = st.columns([2, 2, 1])
 
                 with col_fr:
-                    st.text_input(
-                        "French Word",
-                        value=card.get("fr_word", ""),
-                        key=widget_keys["fr_word"],
-                        on_change=save_card_field,
-                        args=(idx, "fr_word", widget_keys["fr_word"]),
-                    )
+                    with st.container(key=f"{'new' if needs_generation else 'existing'}-card-word-{idx}"):
+                        st.text_input(
+                            "French Word",
+                            value=card.get("fr_word", ""),
+                            placeholder="Write here your word" if needs_generation else None,
+                            key=widget_keys["fr_word"],
+                            on_change=save_card_field,
+                            args=(idx, "fr_word", widget_keys["fr_word"]),
+                        )
+                        if needs_generation:
+                            st.caption("Write your French word above, then click Generate.")
                     st.text_area(
                         "French Sentence",
                         value=card.get("fr_phrase", ""),
@@ -1506,12 +1559,12 @@ if st.session_state.cards_data:
                         on_change=save_card_field,
                         args=(idx, "fr_phrase", widget_keys["fr_phrase"]),
                     )
-                    if french_error := phrase_highlight_error(
+                    if not needs_generation and (french_error := phrase_highlight_error(
                         card.get("fr_phrase", ""),
                         card.get("fr_word", ""),
                         phrase_label="French sentence",
                         target_label="French word",
-                    ):
+                    )):
                         st.error(french_error)
 
                 with col_target:
@@ -1534,12 +1587,12 @@ if st.session_state.cards_data:
                         on_change=save_card_field,
                         args=(idx, "en_phrase", widget_keys["en_phrase"]),
                     )
-                    if target_error := phrase_highlight_error(
+                    if not needs_generation and (target_error := phrase_highlight_error(
                         card.get("en_phrase", ""),
                         card.get("en_word", ""),
                         phrase_label=f"{target_language_name} sentence",
                         target_label=f"{target_language_name} word",
-                    ):
+                    )):
                         st.error(target_error)
 
                 with col_opt:
@@ -1551,18 +1604,28 @@ if st.session_state.cards_data:
                         args=(idx, "extra_notes", widget_keys["extra_notes"]),
                     )
                     regenerate_clicked = st.button(
-                        "🔄 Regenerate",
+                        "✨ Generate" if needs_generation else "🔄 Regenerate",
                         key=f"{widget_prefix}_regenerate",
                         use_container_width=True,
                     )
+                    if st.button(
+                        "🗑️ Delete card",
+                        key=f"{widget_prefix}_delete",
+                        use_container_width=True,
+                    ):
+                        st.session_state.pending_card_deletion = (
+                            idx, st.session_state.card_form_epoch
+                        )
 
                 if regenerate_clicked:
                     previous_card = dict(st.session_state.card_regeneration_baselines[idx])
                     submitted_card = card_from_widgets(idx, widget_keys)
-                    if not api_key:
+                    if needs_generation and not submitted_card.get("fr_word", "").strip():
+                        st.warning("Write your French word before clicking Generate.")
+                    elif not api_key:
                         st.error("Please provide a Gemini API Key.")
                     else:
-                        with st.spinner(f"Regenerating Card {idx + 1}..."):
+                        with st.spinner(f"{'Generating' if needs_generation else 'Regenerating'} Card {idx + 1}..."):
                             try:
                                 updated_card = regenerate_single_card(
                                     api_key,
@@ -1574,15 +1637,27 @@ if st.session_state.cards_data:
                                     no_assimil_mode=no_assimil_mode,
                                     target_language=target_language_name,
                                 )
+                                updated_card.pop("needs_generation", None)
                                 st.session_state.cards_data[idx] = updated_card
                                 st.session_state.card_regeneration_baselines[idx] = dict(
                                     updated_card
                                 )
                                 st.session_state.card_form_versions[idx] = form_version + 1
+                                invalidate_card_export()
                                 st.toast(f"Card {idx + 1} updated!", icon="🎉")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Failed to regenerate card: {str(e)}")
+
+    if pending_deletion := st.session_state.get("pending_card_deletion"):
+        confirm_delete_card(*pending_deletion)
+
+    st.button(
+        "＋ Add card",
+        key="add_card",
+        on_click=add_empty_card,
+        use_container_width=True,
+    )
 
     # --- STEP 3: APPROVE & DOWNLOAD ---
     st.divider()
@@ -1593,8 +1668,21 @@ if st.session_state.cards_data:
     export_validation_errors = [
         f"Card {card_number}: {error}"
         for card_number, card in enumerate(cards_for_export, start=1)
+        if not card.get("needs_generation")
         for error in card_highlight_errors(card, target_language_name)
     ]
+    unfinished_cards = [
+        str(number)
+        for number, card in enumerate(cards_for_export, start=1)
+        if card.get("needs_generation")
+    ]
+    if unfinished_cards:
+        st.info(
+            "Generate or delete the unfinished cards before exporting: "
+            + ", ".join(unfinished_cards)
+        )
+    if not cards_for_export:
+        st.info("Your draft is empty. Click Add card to create a card.")
     if repair_result := st.session_state.pop("highlight_repair_result", None):
         if repair_result["success"]:
             st.success(repair_result["message"])
@@ -1607,7 +1695,7 @@ if st.session_state.cards_data:
         )
         if st.button(
             "✨ Fix phrase errors",
-            disabled=not bool(api_key),
+            disabled=not bool(api_key) or bool(unfinished_cards),
             help=(
                 "Wrong markers are moved first. Remaining phrase errors get one "
                 "repair pass, and every card is validated again."
@@ -1755,7 +1843,7 @@ if st.session_state.cards_data:
                 "📦 Approve All & Download .apkg",
                 type="primary",
                 use_container_width=True,
-                disabled=bool(export_validation_errors),
+                disabled=bool(export_validation_errors or unfinished_cards) or not cards_for_export,
             ):
                 try:
                     with st.spinner(

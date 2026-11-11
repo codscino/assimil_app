@@ -19,18 +19,21 @@ CARD_STRING_FIELDS = (
 def _clean_card(value):
     if not isinstance(value, dict):
         return None
-    return {
+    card = {
         field: field_value
         for field in CARD_STRING_FIELDS
         if isinstance((field_value := value.get(field)), str)
     }
+    if value.get("needs_generation") is True:
+        card["needs_generation"] = True
+    return card
 
 
 def _clean_cards(value):
     if not isinstance(value, list):
         return None
     cards = [_clean_card(card) for card in value]
-    if not cards or any(card is None for card in cards):
+    if any(card is None for card in cards):
         return None
     return cards
 

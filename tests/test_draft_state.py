@@ -36,6 +36,30 @@ class DraftStateTests(unittest.TestCase):
     def test_no_cards_does_not_create_a_browser_draft(self):
         self.assertIsNone(self.build(cards_data=None))
 
+    def test_empty_review_list_survives_reload(self):
+        restored = restore_draft_json(
+            self.build(cards_data=[], card_regeneration_baselines=[]),
+            "en",
+            {"Lesson 1": []},
+        )
+        self.assertEqual(restored["cards_data"], [])
+        self.assertEqual(restored["card_regeneration_baselines"], [])
+
+    def test_unfinished_card_keeps_its_generation_state_and_edits(self):
+        card = {"fr_word": "merci", "fr_phrase": "", "needs_generation": True}
+        restored = restore_draft_json(
+            self.build(cards_data=[self.card, card]), "en", {"Lesson 1": []}
+        )
+        self.assertEqual(restored["cards_data"], [self.card, card])
+        self.assertTrue(restored["card_regeneration_baselines"][1]["needs_generation"])
+
+    def test_generation_flag_only_accepts_boolean_true(self):
+        card = dict(self.card, needs_generation="false")
+        restored = restore_draft_json(
+            self.build(cards_data=[card]), "en", {"Lesson 1": []}
+        )
+        self.assertNotIn("needs_generation", restored["cards_data"][0])
+
     def test_draft_for_another_language_is_ignored(self):
         self.assertIsNone(
             restore_draft_json(self.build(), "it", {"Lesson 1": []})
