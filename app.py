@@ -16,6 +16,7 @@ from pathlib import Path
 import streamlit.components.v1 as components
 
 from draft_state import build_draft_json, restore_draft_json
+from anki_import import import_anki_apkg, reusable_french_audio
 from flashcard_regeneration import (
     build_regeneration_prompt,
     normalize_whole_phrase_translation,
@@ -748,6 +749,9 @@ def regenerate_single_card(
     new_card["extra_notes"] = current_card.get("extra_notes", "")
     new_card["raw_word"] = current_card.get("fr_word", "")
     new_card["user_notes"] = current_card.get("extra_notes", "")
+    for metadata_key in ("anki_guid", "anki_tags", "fr_audio_filename", "fr_audio_text"):
+        if metadata_key in current_card:
+            new_card[metadata_key] = current_card[metadata_key]
     normalize_whole_phrase_translation(new_card)
     ensure_card_markers(new_card)
     try:
@@ -791,6 +795,7 @@ def build_anki_apkg(
     speechify_voice_id,
     shared_tag=None,
     target_language_code="en",
+    imported_audio=None,
 ):
     # An empty string intentionally means "no tag" (used by free practice).
     # Only an omitted value should fall back to the selected lesson tag.
@@ -834,7 +839,16 @@ def build_anki_apkg(
                 french_phrase or french_word
             ).strip()
             audio_field = ""
-            if french_text:
+            preserved_audio = reusable_french_audio(item, imported_audio or {})
+            if preserved_audio:
+                filename, audio_bytes = preserved_audio
+                audio_path = Path(temp_dir) / filename
+                if filename not in generated_audio:
+                    audio_path.write_bytes(audio_bytes)
+                    generated_audio[filename] = audio_path
+                    media_files.append(str(audio_path))
+                audio_field = f"[sound:{filename}]"
+            elif french_text:
                 # Reuse audio when the exact same phrase occurs on multiple cards.
                 filename = (
                     f"fr_{hashlib.sha256(french_text.encode('utf-8')).hexdigest()[:16]}.mp3"
@@ -860,7 +874,8 @@ def build_anki_apkg(
                     html.escape(item.get("extra_notes", "")),
                     audio_field,
                 ],
-                tags=[tag_name] if tag_name else [],
+                tags=list(dict.fromkeys(item.get("anki_tags", "").split() + tag_name.split())),
+                guid=item.get("anki_guid") or None,
             )
             deck.add_note(note)
 
@@ -945,6 +960,15 @@ st.markdown(
         color: #fff !important;
         filter: brightness(1.06);
     }
+    .st-key-import_flashcards button {
+        margin-top: 0.25rem;
+        background-color: #e5e7eb !important;
+        border: 1px solid #9ca3af !important;
+        color: #1f2937 !important;
+    }
+    .st-key-import_flashcards button:hover {
+        background-color: #d1d5db !important;
+    }
     @media (max-width: 640px) {
         .stMain .block-container,
         [data-testid="stAppViewBlockContainer"],
@@ -1016,6 +1040,43 @@ def mark_preferences_changed():
     """Write preferences only after a real widget interaction."""
     st.session_state.preferences_dirty = True
 
+# Apply an upload on a full app run, before rendering language/mode widgets.
+# Setting their values inside a later upload dialog would use stale widget state.
+if imported_deck := st.session_state.pop("pending_anki_import", None):
+    if st.session_state.get("cards_data"):
+        st.toast("Clear the existing flashcards before importing a package.", icon="⚠️")
+    else:
+        old_language = st.session_state.get("target_language", saved_target_language or "en")
+        st.session_state.target_language = imported_deck.language_code
+        st.session_state.cards_target_language = imported_deck.language_code
+        st.session_state.cards_data = imported_deck.cards
+        st.session_state.card_regeneration_baselines = [dict(card) for card in imported_deck.cards]
+        st.session_state.card_form_epoch = st.session_state.get("card_form_epoch", 0) + 1
+        st.session_state.card_form_versions = {}
+        st.session_state.imported_audio = imported_deck.audio
+        st.session_state.import_warnings = imported_deck.warnings
+        st.session_state.shared_tag = imported_deck.shared_tag
+        st.session_state.shared_tag_editor = imported_deck.shared_tag
+        # Imported packages need no arbitrary lesson context. Keep their tags.
+        st.session_state.no_assimil_mode = True
+        st.session_state.last_no_assimil_mode = True
+        st.session_state.preferences_dirty = True
+        for stale_key in (
+            "prepared_apkg", "prepared_apkg_signature", "apkg_auto_download_signature",
+            "pending_card_deletion", "speechify_preview_audio", "highlight_repair_result",
+            "cleanup_after_successful_export", "clear_browser_draft",
+        ):
+            st.session_state.pop(stale_key, None)
+        if old_language != imported_deck.language_code:
+            old_name = TARGET_LANGUAGES.get(old_language, {}).get("name", old_language)
+            new_name = TARGET_LANGUAGES[imported_deck.language_code]["name"]
+            st.toast(
+                f"Target language changed from {old_name} to {new_name}, "
+                "detected from the imported package.",
+                icon="🌐", duration=6,
+            )
+        st.toast(f"Imported {len(imported_deck.cards)} flashcards. Review and edit them below.", icon="📥")
+
 if "target_language" not in st.session_state:
     st.session_state.target_language = (
         saved_target_language if saved_language_is_valid else "en"
@@ -1054,6 +1115,7 @@ if previous_language != target_language_code and st.session_state.get("cards_dat
     st.session_state.cards_data = None
     st.session_state.card_regeneration_baselines = []
     st.session_state.card_form_versions = {}
+    st.session_state.pop("imported_audio", None)
     st.session_state.clear_browser_draft = True
     st.toast("Language changed. Generate a new translated deck.", icon="🌐")
 st.session_state.cards_target_language = target_language_code
@@ -1109,6 +1171,7 @@ if st.session_state.pop("cleanup_after_successful_export", False):
     st.session_state.cards_data = None
     st.session_state.card_regeneration_baselines = []
     st.session_state.card_form_versions = {}
+    st.session_state.pop("imported_audio", None)
     st.session_state.target_words = ""
     st.session_state.target_words_storage_applied = False
     clear_browser_draft = True
@@ -1202,6 +1265,17 @@ def add_empty_card():
     invalidate_card_export()
 
 
+def reset_all_cards():
+    st.session_state.cards_data = None
+    st.session_state.card_regeneration_baselines = []
+    st.session_state.card_form_epoch += 1
+    st.session_state.card_form_versions = {}
+    st.session_state.pop("imported_audio", None)
+    st.session_state.pop("pending_card_deletion", None)
+    st.session_state.clear_browser_draft = True
+    invalidate_card_export()
+
+
 def card_expander_key(card_index):
     return f"card_expander_{st.session_state.card_form_epoch}_{card_index}"
 
@@ -1251,6 +1325,34 @@ def mark_voice_preferences_changed():
 def mark_target_words_changed():
     """Allow writes after the user, rather than initial rendering, changed input."""
     st.session_state.target_words_storage_applied = True
+
+
+def dismiss_import_dialog():
+    st.session_state.pop("import_dialog_open", None)
+
+
+@st.dialog("Import Flashcards", on_dismiss=dismiss_import_dialog)
+def show_import_dialog():
+    if st.session_state.get("cards_data"):
+        st.info("Clear the existing flashcards before importing a package.")
+        return
+    st.caption(
+        "Choose an .apkg with this app's French and translated word/sentence fields. "
+        "Its target language will be detected automatically."
+    )
+    uploaded = st.file_uploader(
+        "Anki package", type=["apkg"], max_upload_size=50,
+        key=f"import_apkg_upload_{st.session_state.card_form_epoch}",
+    )
+    if uploaded is not None:
+        try:
+            imported = import_anki_apkg(uploaded.getvalue(), TARGET_LANGUAGES)
+        except ValueError as error:
+            st.error(str(error))
+            return
+        st.session_state.pending_anki_import = imported
+        dismiss_import_dialog()
+        st.rerun(scope="app")
 
 # --- STEP 1: INPUT FORM ---
 input_step_heading_key = (
@@ -1390,11 +1492,20 @@ with c2:
         on_change=mark_target_words_changed,
     )
 
-if st.button(
-    "✨ Generate Initial Flashcards",
-    type="primary",
-    key="generate_initial_flashcards",
-):
+with st.container(key="flashcard_actions", horizontal=True, vertical_alignment="bottom"):
+    generate_clicked = st.button(
+        "✨ Generate Initial Flashcards", type="primary", key="generate_initial_flashcards",
+    )
+    if not st.session_state.cards_data:
+        if st.button("📥 Import Flashcards", key="import_flashcards"):
+            st.session_state.import_dialog_open = True
+    else:
+        st.empty()
+
+if st.session_state.get("import_dialog_open") and not st.session_state.cards_data:
+    show_import_dialog()
+
+if generate_clicked:
     if not api_key:
         st.error("Please provide a Gemini API Key.")
     elif not user_input.strip():
@@ -1413,6 +1524,7 @@ if st.button(
                     target_language=target_language_name,
                 )
                 st.session_state.cards_data = cards
+                st.session_state.pop("imported_audio", None)
                 st.session_state.cards_target_language = target_language_code
                 st.session_state.card_regeneration_baselines = [
                     dict(card) for card in cards
@@ -1426,6 +1538,8 @@ if st.button(
 
 # --- STEP 2: REVIEW & EDIT SECTION ---
 if st.session_state.cards_data is not None:
+    for import_warning in st.session_state.pop("import_warnings", []):
+        st.warning(import_warning)
     st.markdown(
         """
         <style>
@@ -1487,15 +1601,7 @@ if st.session_state.cards_data is not None:
     
     col_actions1, col_actions2, col_actions3 = st.columns([2, 1, 1])
     with col_actions2:
-        if st.button("🗑️ Reset All Cards", use_container_width=True):
-            st.session_state.cards_data = None
-            st.session_state.card_regeneration_baselines = []
-            st.session_state.card_form_epoch += 1
-            st.session_state.card_form_versions = {}
-            st.session_state.pop("prepared_apkg", None)
-            st.session_state.pop("prepared_apkg_signature", None)
-            st.session_state.clear_browser_draft = True
-            st.rerun()
+        st.button("🗑️ Reset All Cards", use_container_width=True, on_click=reset_all_cards)
     with col_actions3:
         st.button(
             "🔼 Collapse all cards",
@@ -1737,12 +1843,23 @@ if st.session_state.cards_data is not None:
 
     speechify_api_key = st.secrets.get("SPEECHIFY_API_KEY", "")
 
-    if not speechify_api_key:
+    imported_audio = st.session_state.get("imported_audio", {})
+    needs_fresh_audio = any(
+        strip_highlight_markers(card.get("fr_phrase") or card.get("fr_word", "")).strip()
+        and not reusable_french_audio(card, imported_audio)
+        for card in cards_for_export
+    )
+    selected_voice_id = None
+    if any(card.get("fr_audio_filename") for card in cards_for_export):
+        st.caption("Imported French audio is reused for unchanged phrases. "
+                   "New or edited phrases use fresh audio from the selected voice.")
+
+    if needs_fresh_audio and not speechify_api_key:
         st.error(
             "Add SPEECHIFY_API_KEY to .streamlit/secrets.toml before exporting "
             "a deck with French audio."
         )
-    else:
+    elif needs_fresh_audio:
         try:
             speechify_voices = cached_french_voices(speechify_api_key)
         except Exception as error:
@@ -1818,102 +1935,104 @@ if st.session_state.cards_data is not None:
                         format="audio/mpeg",
                     )
 
-            lesson_for_export = st.session_state.selected_lesson
-            tag_for_export = st.session_state.shared_tag
-            voice_for_export = selected_voice_id
-            lesson_num = re.sub(r'\D', '', lesson_for_export) or "01"
-            export_file_name = (
-                f"French_{target_language['deck_code']}_Practice.apkg"
-                if no_assimil_mode
-                else (
-                    f"Assimil_FR2{target_language['deck_code']}_"
-                    f"Lesson_{lesson_num.zfill(2)}.apkg"
-                )
-            )
+    lesson_for_export = st.session_state.selected_lesson
+    tag_for_export = st.session_state.shared_tag
+    voice_for_export = selected_voice_id
+    lesson_num = re.sub(r'\D', '', lesson_for_export) or "01"
+    export_file_name = (
+        f"French_{target_language['deck_code']}_Practice.apkg"
+        if no_assimil_mode
+        else (
+            f"Assimil_FR2{target_language['deck_code']}_"
+            f"Lesson_{lesson_num.zfill(2)}.apkg"
+        )
+    )
 
-            export_signature = hashlib.sha256(
-                json.dumps(
-                    {
-                        "cards": cards_for_export,
-                        "lesson": lesson_for_export,
-                        "tag": tag_for_export,
-                        "voice": voice_for_export,
-                        "language": target_language_code,
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ).encode("utf-8")
-            ).hexdigest()
+    export_signature = hashlib.sha256(
+        json.dumps(
+            {
+                "cards": cards_for_export,
+                "lesson": lesson_for_export,
+                "tag": tag_for_export,
+                "voice": voice_for_export,
+                "language": target_language_code,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
 
-            if st.session_state.get("prepared_apkg_signature") != export_signature:
-                st.session_state.pop("prepared_apkg", None)
-                st.session_state.pop("prepared_apkg_signature", None)
+    if st.session_state.get("prepared_apkg_signature") != export_signature:
+        st.session_state.pop("prepared_apkg", None)
+        st.session_state.pop("prepared_apkg_signature", None)
 
-            if st.button(
-                "📦 Approve All & Download .apkg",
-                type="primary",
-                use_container_width=True,
-                disabled=bool(export_validation_errors or unfinished_cards) or not cards_for_export,
+    if st.button(
+        "📦 Approve All & Download .apkg",
+        type="primary",
+        use_container_width=True,
+        disabled=(bool(export_validation_errors or unfinished_cards) or not cards_for_export
+                  or (needs_fresh_audio and not selected_voice_id)),
+    ):
+        try:
+            with st.spinner(
+                "Generating French pronunciations and packaging deck..."
             ):
-                try:
-                    with st.spinner(
-                        "Generating French pronunciations and packaging deck..."
-                    ):
-                        st.session_state.prepared_apkg = build_anki_apkg(
-                            cards_for_export,
-                            lesson_for_export,
-                            speechify_api_key,
-                            voice_for_export,
-                            shared_tag=tag_for_export,
-                            target_language_code=target_language_code,
-                        ).getvalue()
-                    st.session_state.prepared_apkg_signature = export_signature
-                    # Download once on the following render, then clear this
-                    # request so ordinary reruns never download it again.
-                    st.session_state.apkg_auto_download_signature = export_signature
-                    # The generated package remains available for the automatic
-                    # download, while all disposable browser draft data is reset.
-                    # Preferences live separately from disposable draft data.
-                    st.session_state.cleanup_after_successful_export = True
-                    clear_browser_draft = True
-                    clear_target_words = True
-                except Exception as error:
-                    st.session_state.pop("prepared_apkg", None)
-                    st.session_state.pop("prepared_apkg_signature", None)
-                    st.session_state.pop("apkg_auto_download_signature", None)
-                    st.error(f"Could not prepare the Anki package: {error}")
+                st.session_state.prepared_apkg = build_anki_apkg(
+                    cards_for_export,
+                    lesson_for_export,
+                    speechify_api_key,
+                    voice_for_export,
+                    shared_tag=tag_for_export,
+                    target_language_code=target_language_code,
+                    imported_audio=st.session_state.get("imported_audio", {}),
+                ).getvalue()
+            st.session_state.prepared_apkg_signature = export_signature
+            # Download once on the following render, then clear this
+            # request so ordinary reruns never download it again.
+            st.session_state.apkg_auto_download_signature = export_signature
+            # The generated package remains available for the automatic
+            # download, while all disposable browser draft data is reset.
+            # Preferences live separately from disposable draft data.
+            st.session_state.cleanup_after_successful_export = True
+            clear_browser_draft = True
+            clear_target_words = True
+        except Exception as error:
+            st.session_state.pop("prepared_apkg", None)
+            st.session_state.pop("prepared_apkg_signature", None)
+            st.session_state.pop("apkg_auto_download_signature", None)
+            st.error(f"Could not prepare the Anki package: {error}")
 
-            if prepared_apkg := st.session_state.get("prepared_apkg"):
-                if (
-                    st.session_state.get("apkg_auto_download_signature")
-                    == export_signature
-                ):
-                    apkg_base64 = base64.b64encode(prepared_apkg).decode("ascii")
-                    components.html(
-                        f'''<script>
-                        const encodedPackage = {json.dumps(apkg_base64)};
-                        const binary = atob(encodedPackage);
-                        const bytes = Uint8Array.from(
-                          binary, (character) => character.charCodeAt(0)
-                        );
-                        const packageUrl = URL.createObjectURL(new Blob(
-                          [bytes], {{ type: "application/octet-stream" }}
-                        ));
-                        // The component itself is an iframe. Add the link to the
-                        // app page so its sandbox cannot prevent the download.
-                        const appDocument = window.parent.document;
-                        const link = appDocument.createElement("a");
-                        link.href = packageUrl;
-                        link.download = {json.dumps(export_file_name)};
-                        appDocument.body.appendChild(link);
-                        link.click();
-                        link.remove();
-                        // Let the browser start reading the blob before freeing it.
-                        setTimeout(() => URL.revokeObjectURL(packageUrl), 1000);
-                        </script>''',
-                        height=0,
-                    )
-                    st.session_state.pop("apkg_auto_download_signature", None)
+    if prepared_apkg := st.session_state.get("prepared_apkg"):
+        if (
+            st.session_state.get("apkg_auto_download_signature")
+            == export_signature
+        ):
+            apkg_base64 = base64.b64encode(prepared_apkg).decode("ascii")
+            components.html(
+                f'''<script>
+                const encodedPackage = {json.dumps(apkg_base64)};
+                const binary = atob(encodedPackage);
+                const bytes = Uint8Array.from(
+                  binary, (character) => character.charCodeAt(0)
+                );
+                const packageUrl = URL.createObjectURL(new Blob(
+                  [bytes], {{ type: "application/octet-stream" }}
+                ));
+                // The component itself is an iframe. Add the link to the
+                // app page so its sandbox cannot prevent the download.
+                const appDocument = window.parent.document;
+                const link = appDocument.createElement("a");
+                link.href = packageUrl;
+                link.download = {json.dumps(export_file_name)};
+                appDocument.body.appendChild(link);
+                link.click();
+                link.remove();
+                // Let the browser start reading the blob before freeing it.
+                setTimeout(() => URL.revokeObjectURL(packageUrl), 1000);
+                </script>''',
+                height=0,
+            )
+            st.session_state.pop("apkg_auto_download_signature", None)
 
 # Write only preferences, card data, and ordinary strings to localStorage. API
 # keys, audio, and the prepared package deliberately remain server-side.

@@ -13,6 +13,10 @@ CARD_STRING_FIELDS = (
     "extra_notes",
     "raw_word",
     "user_notes",
+    "anki_guid",
+    "anki_tags",
+    "fr_audio_filename",
+    "fr_audio_text",
 )
 
 
