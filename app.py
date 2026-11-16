@@ -1064,7 +1064,7 @@ if imported_deck := st.session_state.pop("pending_anki_import", None):
         for stale_key in (
             "prepared_apkg", "prepared_apkg_signature", "apkg_auto_download_signature",
             "pending_card_deletion", "speechify_preview_audio", "highlight_repair_result",
-            "cleanup_after_successful_export", "clear_browser_draft",
+            "clear_browser_draft",
         ):
             st.session_state.pop(stale_key, None)
         if old_language != imported_deck.language_code:
@@ -1167,15 +1167,6 @@ if "card_regeneration_baselines" not in st.session_state:
 # restores the cards into the new session.
 clear_browser_draft = st.session_state.pop("clear_browser_draft", False)
 clear_target_words = st.session_state.pop("clear_target_words", False)
-if st.session_state.pop("cleanup_after_successful_export", False):
-    st.session_state.cards_data = None
-    st.session_state.card_regeneration_baselines = []
-    st.session_state.card_form_versions = {}
-    st.session_state.pop("imported_audio", None)
-    st.session_state.target_words = ""
-    st.session_state.target_words_storage_applied = False
-    clear_browser_draft = True
-    clear_target_words = True
 stored_draft = _draft_storage(
     action="clear" if clear_browser_draft else "read",
     draft=None,
@@ -1990,12 +1981,6 @@ if st.session_state.cards_data is not None:
             # Download once on the following render, then clear this
             # request so ordinary reruns never download it again.
             st.session_state.apkg_auto_download_signature = export_signature
-            # The generated package remains available for the automatic
-            # download, while all disposable browser draft data is reset.
-            # Preferences live separately from disposable draft data.
-            st.session_state.cleanup_after_successful_export = True
-            clear_browser_draft = True
-            clear_target_words = True
         except Exception as error:
             st.session_state.pop("prepared_apkg", None)
             st.session_state.pop("prepared_apkg_signature", None)

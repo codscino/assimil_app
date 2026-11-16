@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -198,12 +199,44 @@ class AnkiImportUITests(unittest.TestCase):
         self.assertEqual(imported.language_code, "it")
         self.assertEqual(len(imported.audio), 2)
         self.synthesize_french_audio.assert_not_called()
-        # The existing export flow clears the draft on the following app run.
         self.app.run()
         self.assert_healthy()
+        self.assertEqual(self.app.session_state.cards_data[0]["extra_notes"], "Edited notes & accents é")
+        next(button for button in self.app.button if button.label == "🗑️ Reset All Cards").click().run()
         self.assertIn("import_flashcards", [button.key for button in self.app.button])
         self.upload(data=exported)
         self.assertEqual(self.app.session_state.cards_data[0]["extra_notes"], "Edited notes & accents é")
+
+    def test_export_preserves_work_across_reruns_and_session_restore(self):
+        self.upload("it")
+        self.app.text_area(key="target_words").set_value("bonjour (keep my input)").run()
+        self.app.text_input(key="shared_tag_editor").set_value("custom-tag").run()
+        next(field for field in self.app.text_input if field.label == "Notes").set_value("Keep this edit").run()
+        preserved_keys = (
+            "cards_data", "card_regeneration_baselines", "card_form_epoch",
+            "card_form_versions", "imported_audio", "target_words",
+            "shared_tag", "selected_lesson", "target_language", "no_assimil_mode",
+        )
+        before_export = deepcopy({key: self.app.session_state[key] for key in preserved_keys})
+        saved_draft = self.storage["assimil-flashcard-draft-v1"]
+        self.storage_calls.clear()
+
+        next(button for button in self.app.button if button.label == "📦 Approve All & Download .apkg").click().run()
+        for _ in range(3):
+            self.assert_healthy()
+            self.assertEqual(
+                {key: self.app.session_state[key] for key in preserved_keys}, before_export
+            )
+            self.assertEqual(self.storage["assimil-flashcard-draft-v1"], saved_draft)
+            self.assertEqual(self.storage["assimil-target-words-v1"], before_export["target_words"])
+            self.assertNotIn("apkg_auto_download_signature", self.app.session_state)
+            self.app.run()
+        self.assertFalse(any(call["action"] == "clear" for call in self.storage_calls))
+
+        self.app = self.new_app()
+        for key in ("cards_data", "card_regeneration_baselines", "target_words",
+                    "shared_tag", "target_language", "no_assimil_mode"):
+            self.assertEqual(self.app.session_state[key], before_export[key])
 
     def test_edited_french_requires_fresh_audio_and_uses_selected_voice(self):
         self.upload("it")
