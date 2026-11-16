@@ -16,7 +16,11 @@ from pathlib import Path
 import streamlit.components.v1 as components
 
 from draft_state import build_draft_json, restore_draft_json
-from flashcard_regeneration import build_regeneration_prompt, translation_language_instruction
+from flashcard_regeneration import (
+    build_regeneration_prompt,
+    normalize_whole_phrase_translation,
+    translation_language_instruction,
+)
 from highlight_markup import (
     HIGHLIGHT_PATTERN,
     ensure_target_marker,
@@ -410,7 +414,7 @@ class FlashcardItem(BaseModel):
     # These legacy JSON keys keep existing saved cards compatible. Their values
     # contain whichever target language the user selected.
     en_word: str = Field(description="Direct target-language translation of fr_word")
-    en_phrase: str = Field(description="Target-language translation with en_word wrapped in &ampersands&")
+    en_phrase: str = Field(description="Faithful translation of fr_phrase with no added meaning, with en_word wrapped in &ampersands&")
     extra_notes: str = Field(description="User notes combined with brief grammar tips if useful")
 
 
@@ -548,6 +552,9 @@ def repair_card_highlights_once(client, model_name, cards, target_language):
     validation errors; never return an invalid phrase unchanged.
     Keep `fr_word`, `en_word`, and `extra_notes` exactly unchanged. Rewrite only
     `fr_phrase` and/or `en_phrase` when necessary.
+    Keep each translation faithful to its French source without adding meaning.
+    Preserve a valid French phrase; correct the translation rather than adding
+    French context to justify an overlong translation.
 
     Each French phrase must naturally contain its exact `fr_word`, and each
     {target_language} phrase must naturally contain its exact `en_word`.
@@ -575,6 +582,7 @@ def repair_card_highlights_once(client, model_name, cards, target_language):
         card = cards[invalid_card["card_index"]]
         card["fr_phrase"] = repaired_card.get("fr_phrase", card.get("fr_phrase", ""))
         card["en_phrase"] = repaired_card.get("en_phrase", card.get("en_phrase", ""))
+        normalize_whole_phrase_translation(card)
         ensure_card_markers(card)
 
     remaining_errors = [
@@ -690,6 +698,7 @@ def generate_flashcards_with_gemini(
             item["raw_word"] = source["raw_word"]
             item["user_notes"] = source["user_notes"]
             item["extra_notes"] = source["user_notes"]
+        normalize_whole_phrase_translation(item)
         ensure_card_markers(item)
 
     try:
@@ -739,6 +748,7 @@ def regenerate_single_card(
     new_card["extra_notes"] = current_card.get("extra_notes", "")
     new_card["raw_word"] = current_card.get("fr_word", "")
     new_card["user_notes"] = current_card.get("extra_notes", "")
+    normalize_whole_phrase_translation(new_card)
     ensure_card_markers(new_card)
     try:
         repaired_cards, _ = repair_card_highlights_once(

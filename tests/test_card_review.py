@@ -209,6 +209,36 @@ class CardReviewTests(unittest.TestCase):
         self.assertIn('"raw_word": "en fait"', response.call_args.kwargs["contents"])
         self.assertIn("Do not invent a new", response.call_args.kwargs["contents"])
 
+    def test_whole_marked_phrase_translation_has_no_added_context(self):
+        sentence = "&il n'y a rien à manger&"
+        self.app.text_area(key="target_words").set_value(sentence).run()
+        response = self.client.return_value.models.generate_content
+        card = {
+            "fr_word": "il n'y a rien à manger",
+            "fr_phrase": sentence,
+            "en_word": "there is nothing to eat",
+            "en_phrase": "Unfortunately, &there is nothing to eat& in the kitchen.",
+            "extra_notes": "",
+        }
+        response.return_value = SimpleNamespace(text=json.dumps([card]))
+        self.app.button(key="generate_initial_flashcards").click().run()
+        self.assertFalse(self.app.exception)
+        self.assertEqual(
+            self.app.session_state.cards_data[0]["en_phrase"],
+            "&there is nothing to eat&",
+        )
+        self.assertEqual(response.call_count, 1)
+
+        response.return_value = SimpleNamespace(text=json.dumps(card))
+        next(button for button in self.app.button if button.label == "🔄 Regenerate").click().run()
+        self.assertFalse(self.app.exception)
+        self.assertEqual(self.app.session_state.cards_data[0]["fr_phrase"], sentence)
+        self.assertEqual(
+            self.app.session_state.cards_data[0]["en_phrase"],
+            "&there is nothing to eat&",
+        )
+        self.assertEqual(response.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

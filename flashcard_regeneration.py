@@ -1,5 +1,7 @@
 import json
 
+from highlight_markup import normalize_for_containment, strip_highlight_markers
+
 
 CARD_CONTENT_FIELDS = ("fr_word", "fr_phrase", "en_word", "en_phrase")
 FIELD_LABELS = {
@@ -17,10 +19,35 @@ def translation_language_instruction(target_language):
         f"Write `en_word` and `en_phrase` exclusively in {target_language}. "
         "The `en_` prefix is a legacy storage name, not an instruction to use English. "
         "Keep `fr_word` and `fr_phrase` in French. "
+        "Translate only the meaning present in the corresponding French field: "
+        "`en_word` translates `fr_word`, and `en_phrase` translates `fr_phrase`. "
+        "Do not add situations, clauses, explanations, or details absent from the French. "
+        "A translation may need more words, but must not convey extra meaning. "
+        "When the entire French phrase is highlighted, the entire translation must "
+        "also be highlighted and equal `en_word`; do not add an example sentence. "
         "Lesson references, user notes, and existing cards may contain other languages; "
         "they do not override the selected translation language. "
         "Before returning JSON, verify that both translation fields use the selected language."
     )
+
+
+def normalize_whole_phrase_translation(card):
+    """Use the direct translation when the French target is the whole phrase.
+
+    Apply to model output only, so manually edited translations remain editable.
+    """
+    french_phrase = strip_highlight_markers(card.get("fr_phrase", ""))
+    french_word = card.get("fr_word", "")
+    translation = strip_highlight_markers(card.get("en_word", "")).strip()
+    if (
+        normalize_for_containment(french_word)
+        and normalize_for_containment(french_phrase)
+        == normalize_for_containment(french_word)
+        and translation
+    ):
+        card["en_word"] = translation
+        card["en_phrase"] = f"&{translation}&"
+    return card
 
 
 def changed_content_fields(previous_card, current_card):
@@ -104,6 +131,9 @@ def build_regeneration_prompt(
        translation language; translate existing translation fields into
        {target_language} if they are in another language, even if not edited.
        Rewrite fields that must change to make the card coherent.
+       Remove any translated content that adds meaning absent from the French.
+       If the French target already forms the entire supplied phrase, preserve
+       that phrase rather than extending it with an invented example or context.
     3. Resolve conflicts in this strict order: `fr_word` > `fr_phrase` > `en_word`
        > `en_phrase`. The primary source of truth identifies the highest-priority
        non-empty field explicitly edited by the user.

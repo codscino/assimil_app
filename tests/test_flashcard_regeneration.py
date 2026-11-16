@@ -3,6 +3,7 @@ import unittest
 from flashcard_regeneration import (
     build_regeneration_prompt,
     changed_content_fields,
+    normalize_whole_phrase_translation,
     regeneration_source,
 )
 
@@ -79,6 +80,33 @@ class RegenerationContextTests(unittest.TestCase):
 
         self.assertIn("Primary source of truth: Italian word (`en_word`)", prompt)
         self.assertIn("exact Italian translation", prompt)
+
+
+class WholePhraseTranslationTests(unittest.TestCase):
+    def test_whole_phrase_discards_invented_translation_context(self):
+        for translation in ("There is nothing to eat", "Non c'è niente da mangiare"):
+            with self.subTest(translation=translation):
+                card = {
+                    "fr_word": "il n'y a rien à manger",
+                    "fr_phrase": "&il n'y a rien à manger&",
+                    "en_word": translation,
+                    "en_phrase": f"Today, &{translation}& in the house.",
+                    "extra_notes": "keep this",
+                }
+                normalize_whole_phrase_translation(card)
+                self.assertEqual(card["en_phrase"], f"&{translation}&")
+                self.assertEqual(card["extra_notes"], "keep this")
+
+    def test_partial_target_keeps_translated_sentence(self):
+        card = {
+            "fr_word": "à manger",
+            "fr_phrase": "il n'y a rien &à manger&",
+            "en_word": "to eat",
+            "en_phrase": "There is nothing &to eat&",
+        }
+        original = dict(card)
+        normalize_whole_phrase_translation(card)
+        self.assertEqual(card, original)
 
 
 if __name__ == "__main__":
