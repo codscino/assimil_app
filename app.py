@@ -960,13 +960,15 @@ st.markdown(
         color: #fff !important;
         filter: brightness(1.06);
     }
-    .st-key-import_flashcards button {
+    .st-key-import_flashcards button,
+    .st-key-generate_fix_audio button {
         margin-top: 0.25rem;
         background-color: #e5e7eb !important;
         border: 1px solid #9ca3af !important;
         color: #1f2937 !important;
     }
-    .st-key-import_flashcards button:hover {
+    .st-key-import_flashcards button:hover,
+    .st-key-generate_fix_audio button:hover {
         background-color: #d1d5db !important;
     }
     @media (max-width: 640px) {
@@ -1313,6 +1315,122 @@ def mark_voice_preferences_changed():
     mark_preferences_changed()
 
 
+def select_french_voice(speechify_api_key):
+    """Share the available voices and saved selection across audio workflows."""
+    try:
+        voices = cached_french_voices(speechify_api_key)
+    except Exception as error:
+        st.error(f"Could not load Speechify voices: {error}")
+        return None
+    if not voices:
+        st.warning(
+            "No French Speechify voices compatible with Simba 3 are available "
+            "for this API key."
+        )
+        return None
+
+    voice_ids = [voice["id"] for voice in voices]
+    if "speechify_voice_id" not in st.session_state and saved_speechify_voice_id in voice_ids:
+        st.session_state.speechify_voice_id = saved_speechify_voice_id
+    elif st.session_state.get("speechify_voice_id") not in voice_ids:
+        st.session_state.pop("speechify_voice_id", None)
+    configured_voice_id = st.secrets.get("SPEECHIFY_VOICE_ID", "")
+    voice_by_id = {voice["id"]: voice for voice in voices}
+    return st.selectbox(
+        "Select French voice",
+        options=voice_ids,
+        index=voice_ids.index(configured_voice_id) if configured_voice_id in voice_ids else 0,
+        format_func=lambda voice_id: (
+            f"{voice_by_id[voice_id]['display_name']} "
+            f"({voice_by_id[voice_id]['locale']}, {voice_by_id[voice_id]['gender']})"
+        ),
+        help=(
+            "Only voices compatible with French on Simba 3 are shown. "
+            "Audio is generated at 0.7× speed."
+        ),
+        key="speechify_voice_id",
+        on_change=mark_voice_preferences_changed,
+    )
+
+
+def show_audio_generator(user_input):
+    """Generate downloadable French audio without creating Anki notes."""
+    with st.container(border=True, key="audio_generator"):
+        st.subheader("🔊 Generate/fix audio", anchor=False)
+        st.caption(
+            "Each nonempty line in Target Words is spoken exactly as written in French. "
+            "Choose a voice, generate a preview, then download its MP3 to replace your Anki audio."
+        )
+        if st.button("Close audio mode", key="close_audio_mode"):
+            st.session_state.pop("audio_mode", None)
+            st.rerun()
+
+        phrases = [line.strip() for line in user_input.splitlines() if line.strip()]
+        if not phrases:
+            st.info("Enter one French phrase per line in Target Words above.")
+            return
+        speechify_api_key = st.secrets.get("SPEECHIFY_API_KEY", "")
+        if not speechify_api_key:
+            st.error("Add SPEECHIFY_API_KEY to .streamlit/secrets.toml to generate French audio.")
+            return
+        voice_col, _ = st.columns(2)
+        with voice_col:
+            voice_id = select_french_voice(speechify_api_key)
+        if not voice_id:
+            return
+
+        # Keep only audio matching the current text and voice. Widget reruns and
+        # downloads reuse it; edited lines or a different voice need fresh audio.
+        current_keys = {(voice_id, phrase) for phrase in phrases}
+        audio_files = {
+            key: audio for key, audio in st.session_state.get("standalone_audio", {}).items()
+            if key in current_keys
+        }
+        st.session_state.standalone_audio = audio_files
+
+        def generate_phrase(phrase, index):
+            try:
+                audio_files[(voice_id, phrase)] = synthesize_french_audio(
+                    speechify_api_key, voice_id, phrase
+                )
+            except Exception as error:
+                st.error(f"Could not generate audio for phrase {index + 1}: {error}")
+
+        if st.button(
+            "🔊 Generate all MP3s", key="generate_all_audio",
+            disabled=all(key in audio_files for key in current_keys),
+        ):
+            with st.spinner("Generating French MP3s…"):
+                for index, phrase in enumerate(phrases):
+                    if (voice_id, phrase) not in audio_files:
+                        generate_phrase(phrase, index)
+
+        for index, phrase in enumerate(phrases):
+            signature = hashlib.sha256(
+                json.dumps([voice_id, phrase], ensure_ascii=False).encode("utf-8")
+            ).hexdigest()[:16]
+            with st.container(border=True):
+                st.text(f"{index + 1}. {phrase}")
+                audio_key = (voice_id, phrase)
+                if audio_key not in audio_files:
+                    if st.button("▶ Generate preview", key=f"audio_preview_{index}_{signature}"):
+                        with st.spinner("Generating French audio…"):
+                            generate_phrase(phrase, index)
+                if audio_key in audio_files:
+                    audio = audio_files[audio_key]
+                    preview_base64 = base64.b64encode(audio).decode("ascii")
+                    st.audio(f"data:audio/mpeg;base64,{preview_base64}", format="audio/mpeg")
+                    phrase_slug = re.sub(r"[^\w-]+", "_", phrase).strip("_")[:50] or "phrase"
+                    st.download_button(
+                        "⬇️ Download MP3",
+                        data=audio,
+                        file_name=f"fr_{index + 1:02d}_{phrase_slug}_{signature}.mp3",
+                        mime="audio/mpeg",
+                        key=f"audio_download_{index}_{signature}",
+                        on_click="ignore",
+                    )
+
+
 def mark_target_words_changed():
     """Allow writes after the user, rather than initial rendering, changed input."""
     st.session_state.target_words_storage_applied = True
@@ -1490,8 +1608,14 @@ with st.container(key="flashcard_actions", horizontal=True, vertical_alignment="
     if not st.session_state.cards_data:
         if st.button("📥 Import Flashcards", key="import_flashcards"):
             st.session_state.import_dialog_open = True
+        if st.button("🔊 Generate/fix audio", key="generate_fix_audio"):
+            st.session_state.audio_mode = True
     else:
+        st.session_state.pop("audio_mode", None)
         st.empty()
+
+if st.session_state.get("audio_mode") and not st.session_state.cards_data:
+    show_audio_generator(user_input)
 
 if st.session_state.get("import_dialog_open") and not st.session_state.cards_data:
     show_import_dialog()
@@ -1851,32 +1975,11 @@ if st.session_state.cards_data is not None:
             "a deck with French audio."
         )
     elif needs_fresh_audio:
-        try:
-            speechify_voices = cached_french_voices(speechify_api_key)
-        except Exception as error:
-            speechify_voices = []
-            st.error(f"Could not load Speechify voices: {error}")
-
-        if not speechify_voices:
-            st.warning(
-                "No French Speechify voices compatible with Simba 3 are available "
-                "for this API key."
-            )
-        else:
-            voice_ids = [voice["id"] for voice in speechify_voices]
-            configured_voice_id = st.secrets.get("SPEECHIFY_VOICE_ID", "")
-            saved_voice_is_valid = saved_speechify_voice_id in voice_ids
-            if "speechify_voice_id" not in st.session_state and saved_voice_is_valid:
-                st.session_state.speechify_voice_id = saved_speechify_voice_id
-            elif st.session_state.get("speechify_voice_id") not in voice_ids:
-                # A saved voice may no longer be available for the API key.
-                st.session_state.pop("speechify_voice_id", None)
-            default_voice_index = (
-                voice_ids.index(configured_voice_id)
-                if configured_voice_id in voice_ids
-                else 0
-            )
-            voice_by_id = {voice["id"]: voice for voice in speechify_voices}
+        # Keep voice choice/preview before the export action, at half width.
+        voice_col, _ = st.columns(2)
+        with voice_col:
+            selected_voice_id = select_french_voice(speechify_api_key)
+        if selected_voice_id:
             preview_phrase = (
                 strip_highlight_markers(
                     st.session_state.cards_data[0].get("fr_phrase", "")
@@ -1885,25 +1988,7 @@ if st.session_state.cards_data is not None:
                 else ""
             )
 
-            # Keep voice choice/preview before the export action, at half width.
-            voice_col, _ = st.columns(2)
             with voice_col:
-                selected_voice_id = st.selectbox(
-                    "Select French voice",
-                    options=voice_ids,
-                    index=default_voice_index,
-                    format_func=lambda voice_id: (
-                        f"{voice_by_id[voice_id]['display_name']} "
-                        f"({voice_by_id[voice_id]['locale']}, "
-                        f"{voice_by_id[voice_id]['gender']})"
-                    ),
-                    help=(
-                        "Only voices compatible with French on Simba 3 are shown. "
-                        "Audio is generated at 0.7× speed."
-                    ),
-                    key="speechify_voice_id",
-                    on_change=mark_voice_preferences_changed,
-                )
                 if st.button("▶ Preview selected voice", use_container_width=True):
                     if not preview_phrase:
                         st.warning("The first flashcard needs a French phrase to preview.")
