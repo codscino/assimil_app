@@ -17,6 +17,7 @@ import streamlit.components.v1 as components
 
 from draft_state import build_draft_json, restore_draft_json
 from anki_import import import_anki_apkg, reusable_french_audio
+from audio_filenames import french_audio_filename
 from flashcard_regeneration import (
     build_regeneration_prompt,
     normalize_whole_phrase_translation,
@@ -828,6 +829,7 @@ def build_anki_apkg(
     
     with tempfile.TemporaryDirectory() as temp_dir:
         media_files = []
+        packaged_audio = set()
         generated_audio = {}
 
         for item in cards_data:
@@ -839,28 +841,28 @@ def build_anki_apkg(
                 french_phrase or french_word
             ).strip()
             audio_field = ""
+            audio_bytes = None
+            extension = ".mp3"
+            note_tags = list(dict.fromkeys(item.get("anki_tags", "").split() + tag_name.split()))
             preserved_audio = reusable_french_audio(item, imported_audio or {})
             if preserved_audio:
-                filename, audio_bytes = preserved_audio
-                audio_path = Path(temp_dir) / filename
-                if filename not in generated_audio:
-                    audio_path.write_bytes(audio_bytes)
-                    generated_audio[filename] = audio_path
-                    media_files.append(str(audio_path))
-                audio_field = f"[sound:{filename}]"
+                original_filename, audio_bytes = preserved_audio
+                extension = Path(original_filename).suffix
             elif french_text:
                 # Reuse audio when the exact same phrase occurs on multiple cards.
-                filename = (
-                    f"fr_{hashlib.sha256(french_text.encode('utf-8')).hexdigest()[:16]}.mp3"
+                if french_text not in generated_audio:
+                    generated_audio[french_text] = synthesize_french_audio(
+                        speechify_api_key, speechify_voice_id, french_text
+                    )
+                audio_bytes = generated_audio[french_text]
+            if audio_bytes is not None:
+                filename = french_audio_filename(
+                    french_word or french_text, " ".join(note_tags), audio_bytes, extension
                 )
                 audio_path = Path(temp_dir) / filename
-                if filename not in generated_audio:
-                    audio_path.write_bytes(
-                        synthesize_french_audio(
-                            speechify_api_key, speechify_voice_id, french_text
-                        )
-                    )
-                    generated_audio[filename] = audio_path
+                if filename not in packaged_audio:
+                    audio_path.write_bytes(audio_bytes)
+                    packaged_audio.add(filename)
                     media_files.append(str(audio_path))
                 audio_field = f"[sound:{filename}]"
 
@@ -874,7 +876,7 @@ def build_anki_apkg(
                     html.escape(item.get("extra_notes", "")),
                     audio_field,
                 ],
-                tags=list(dict.fromkeys(item.get("anki_tags", "").split() + tag_name.split())),
+                tags=note_tags,
                 guid=item.get("anki_guid") or None,
             )
             deck.add_note(note)
@@ -1378,6 +1380,12 @@ def show_audio_generator(user_input):
             voice_id = select_french_voice(speechify_api_key)
         if not voice_id:
             return
+        audio_tag = st.text_input(
+            "Tag for filenames (optional)",
+            value=st.session_state.shared_tag,
+            key="standalone_audio_tag",
+            help="Use the Anki tag you want to recognize in your downloaded filenames.",
+        )
 
         # Keep only audio matching the current text and voice. Widget reruns and
         # downloads reuse it; edited lines or a different voice need fresh audio.
@@ -1420,11 +1428,10 @@ def show_audio_generator(user_input):
                     audio = audio_files[audio_key]
                     preview_base64 = base64.b64encode(audio).decode("ascii")
                     st.audio(f"data:audio/mpeg;base64,{preview_base64}", format="audio/mpeg")
-                    phrase_slug = re.sub(r"[^\w-]+", "_", phrase).strip("_")[:50] or "phrase"
                     st.download_button(
                         "⬇️ Download MP3",
                         data=audio,
-                        file_name=f"fr_{index + 1:02d}_{phrase_slug}_{signature}.mp3",
+                        file_name=french_audio_filename(phrase, audio_tag, audio),
                         mime="audio/mpeg",
                         key=f"audio_download_{index}_{signature}",
                         on_click="ignore",
