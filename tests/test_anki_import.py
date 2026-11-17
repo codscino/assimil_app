@@ -51,6 +51,10 @@ class AnkiImportTests(unittest.TestCase):
                     imported_audio=imported.audio,
                 ).getvalue()
                 self.exporter["synthesize_french_audio"].assert_not_called()
+                with zipfile.ZipFile(io.BytesIO(exported)) as package:
+                    media = json.loads(package.read("media"))
+                    self.assertTrue(any(name.startswith("fr_bonjour_personal_tag_replacement_shared_")
+                                        for name in media.values()))
                 again = self.read(exported)
                 self.assertEqual(again.cards[0]["anki_guid"], imported.cards[0]["anki_guid"])
                 self.assertEqual(again.cards[0]["extra_notes"], "Edited & preserved <notes>")
@@ -64,6 +68,45 @@ class AnkiImportTests(unittest.TestCase):
                     self.assertEqual(set(conn.execute("SELECT DISTINCT ord,did FROM cards")),
                                      {(0, deck_ids[0]), (1, deck_ids[1])})
                 rewrite_package(exported, verify)
+
+    def test_readable_audio_names_match_note_references_and_include_all_tags(self):
+        cards = sample_cards()
+        cards[0]["anki_tags"] = "personal::food"
+        data = sample_package(cards=cards, shared_tag="Pilsmeur_1-15")
+        with zipfile.ZipFile(io.BytesIO(data)) as package:
+            media = json.loads(package.read("media"))
+            self.assertEqual(len(media), 2)
+            self.assertTrue(any(name.startswith("fr_bonjour_personal_food_pilsmeur_1-15_")
+                                for name in media.values()))
+            self.assertTrue(any(name.startswith("fr_merci_pilsmeur_1-15_")
+                                for name in media.values()))
+
+        def verify(conn):
+            references = [row[0].split("\x1f")[-1] for row in conn.execute("SELECT flds FROM notes")]
+            self.assertEqual(set(references), {f"[sound:{name}]" for name in media.values()})
+        rewrite_package(data, verify)
+        imported = self.read(data)
+        self.assertFalse(imported.warnings)
+        self.assertEqual(len(imported.audio), 2)
+
+    def test_repeated_phrase_with_different_words_and_tags_is_synthesized_once(self):
+        cards = [
+            dict(sample_cards()[0], fr_word=word, fr_phrase=phrase, anki_tags=tag)
+            for word, phrase, tag in (
+                ("bonjour", "Je dis &bonjour& à Chloé.", "first"),
+                ("Chloé", "Je dis bonjour à &Chloé&.", "second"),
+            )
+        ]
+        self.exporter["synthesize_french_audio"].reset_mock()
+        data = sample_package(namespace=self.exporter, cards=cards, shared_tag="lesson")
+        self.exporter["synthesize_french_audio"].assert_called_once_with(
+            "test-key", "test-voice", "Je dis bonjour à Chloé."
+        )
+        with zipfile.ZipFile(io.BytesIO(data)) as package:
+            media = json.loads(package.read("media"))
+            self.assertEqual(len(media), 2)
+            self.assertTrue(any(name.startswith("fr_bonjour_first_lesson_") for name in media.values()))
+            self.assertTrue(any(name.startswith("fr_chloe_lesson_second_") for name in media.values()))
 
     def test_changed_french_phrase_generates_only_its_audio_and_keeps_guid(self):
         imported = self.read()

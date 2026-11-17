@@ -151,6 +151,23 @@ class AudioGeneratorUITests(unittest.TestCase):
         self.assertEqual(self.synthesize_french_audio.call_count, 3)
         self.synthesize_french_audio.assert_called_with("audio-test-key", "amelie", "Au revoir.")
 
+    def test_download_tag_updates_readable_filename_without_regenerating_audio(self):
+        self.open_mode("Non, je ne vais pas bien.")
+        self.app.text_input(key="standalone_audio_tag").set_value("Pilsmeur_1-15").run()
+        self.preview_buttons()[0].click().run()
+        self.assertFalse(self.app.exception)
+        self.assertRegex(
+            self.download_button.call_args.kwargs["file_name"],
+            r"^fr_non_je_ne_vais_pas_bien_pilsmeur_1-15_[a-f0-9]{12}\.mp3$",
+        )
+        self.app.text_input(key="standalone_audio_tag").set_value("mp3fix").run()
+        self.assertFalse(self.app.exception)
+        self.assertRegex(
+            self.download_button.call_args.kwargs["file_name"],
+            r"^fr_non_je_ne_vais_pas_bien_mp3fix_[a-f0-9]{12}\.mp3$",
+        )
+        self.synthesize_french_audio.assert_called_once()
+
     def test_failure_keeps_successful_mp3s_and_retries_only_missing_phrases(self):
         self.synthesize_french_audio.side_effect = [RuntimeError("Try again"), b"merci"]
         self.open_mode("Bonjour.\nMerci.")
